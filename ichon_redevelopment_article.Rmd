@@ -1,6 +1,5 @@
 ﻿---
 title: "이촌동 초입 구역의 재개발 가능성 분석"
-author: "윤정환"
 date: "`r Sys.Date()`"
 output: 
   html_document:
@@ -1254,8 +1253,11 @@ if (length(preserved_land_area_m2) == 0 || is.na(preserved_land_area_m2)) {
   preserved_land_area_m2 <- 0
 }
 
+budae_original_name <- "부대찌개건물"
+budae_display_name <- "부대찌게(은진연립)"
+
 mixed_budae_land_area <- comm_summary %>%
-  filter(bldg_nm == "부대찌개건물") %>%
+  filter(bldg_nm == budae_original_name) %>%
   summarise(land_area = sum(land_area, na.rm = TRUE), .groups = "drop") %>%
   pull(land_area)
 
@@ -1265,13 +1267,14 @@ if (length(mixed_budae_land_area) == 0 || is.na(mixed_budae_land_area)) {
 
 budae_residential_households <- 5
 budae_commercial_units <- 6
-budae_total_units <- budae_residential_households + budae_commercial_units
-budae_residential_land_area <- mixed_budae_land_area * budae_residential_households / budae_total_units
-budae_commercial_land_area <- mixed_budae_land_area * budae_commercial_units / budae_total_units
+budae_total_land_area_for_rights <- 660
+budae_unit_land_area <- budae_total_land_area_for_rights / 10
+budae_commercial_land_area <- budae_commercial_units * budae_unit_land_area
+budae_residential_land_area <- pmax(budae_total_land_area_for_rights - budae_commercial_land_area, 0)
 masan_min_land_area <- 20
 
 residential_right_base <- apt_summary %>%
-  filter(!stringr::str_detect(bldg_nm, "^합계")) %>%
+  filter(!stringr::str_detect(bldg_nm, "^합계"), bldg_nm != budae_original_name) %>%
   select(bldg_nm, hh, land_area) %>%
   left_join(asking_price_by_bldg, by = "bldg_nm") %>%
   mutate(
@@ -1284,14 +1287,14 @@ residential_total_right_value_base <- sum(residential_right_base$right_value, na
 residential_right_value_per_m2_base <- residential_total_right_value_base / residential_right_land_area_m2
 
 mixed_residential_right_by_bldg <- tibble::tibble(
-  bldg_nm = "부대찌개건물(주거)",
+  bldg_nm = budae_display_name,
   hh = budae_residential_households,
   land_area = budae_residential_land_area,
   asking_price = NA_real_,
   asking_area_m2 = NA_real_,
   asking_price_per_pyeong = NA_real_,
   asking_source_date = "토지지분 안분",
-  asking_source = "부대찌개건물 주거 5 / 근생 6 안분",
+  asking_source = "부대찌게(은진연립) 주거 5가구 최소배정 / 상업 6호 396㎡ 분리",
   asking_n = NA_integer_,
   asking_price_95 = if_else(
     budae_residential_land_area > 0,
@@ -1370,10 +1373,11 @@ nonres_right_source <- comm_summary %>%
   filter(!stringr::str_detect(bldg_nm, "^합계")) %>%
   mutate(
     land_area = case_when(
-      bldg_nm == "부대찌개건물" ~ budae_commercial_land_area,
+      bldg_nm == budae_original_name ~ budae_commercial_land_area,
       bldg_nm == "마산아구찜" & (is.na(land_area) | land_area <= 0) ~ masan_min_land_area,
       TRUE ~ land_area
-    )
+    ),
+    bldg_nm = if_else(bldg_nm == budae_original_name, budae_display_name, bldg_nm)
   )
 
 nonres_right_by_bldg <- nonres_right_source %>%
@@ -1410,7 +1414,7 @@ nonres_right_by_bldg %>%
   scroll_box(width = "100%")
 
 cat(glue::glue("
-주거지역 권리가액은 최근 확인 호가에 95%를 적용한 뒤 단지별 세대수를 곱해 산정하였다. 부대찌개건물은 주거 5, 근생 6의 혼합건물로 보아 대지면적을 가구·호수 기준 5:6으로 안분하였고, 주거분은 주거지역 ㎡당 권리가액 기준으로 별도 반영하였다. 이를 주거지역 대지면적 {format(residential_right_land_area_m2, big.mark = ',')}㎡로 나누면 ㎡당 권리가액은 약 {format(round(residential_right_value_per_m2), big.mark = ',')}만원/㎡이다. 비주거지역은 상업용지가 통상 주거용지보다 높게 평가된다는 점을 반영하되 과도한 평가를 피하기 위해 주거지역 ㎡당 권리가액의 1.6배를 적용하였다. 부대찌개건물 근생분은 나머지 6/11 대지지분으로 반영하고, 마산아구찜은 최저 지분 20㎡를 가정하였다. 존치부지와 도로·공원·주차장은 비주거 권리가액 배분 대상에서 제외하고, 비주거 개발대상 대지면적 {format(round(nonres_development_land_area_m2), big.mark = ',')}㎡를 나머지 비주거 건물의 현재 대지면적 비중으로 배분하였다. 도로는 별도 매입 대상으로 보고 약 {format(road_purchase_area_m2, big.mark = ',')}㎡에 대해 주거지역 ㎡당 권리가액의 90%를 적용하였으며, 공시지가는 ㎡당 약 {format(road_public_price_per_m2, big.mark = ',')}만원 수준으로 참고하였다.
+주거지역 권리가액은 최근 확인 호가에 95%를 적용한 뒤 단지별 세대수를 곱해 산정하였다. 부대찌게(은진연립)은 주거 5가구와 상업 6호가 혼재된 건물로 보아, 전체 대지면적을 660㎡로 단순화하고 66㎡ 단위 환산 기준을 적용하였다. 이 중 상업 6호분 396㎡는 비주거 오피스텔 권리자로 분리하고, 주거 5가구는 최소배정 기준으로 주거 권리가액에 별도 반영하였다. 이를 주거지역 대지면적 {format(residential_right_land_area_m2, big.mark = ',')}㎡로 나누면 ㎡당 권리가액은 약 {format(round(residential_right_value_per_m2), big.mark = ',')}만원/㎡이다. 비주거지역은 상업용지가 통상 주거용지보다 높게 평가된다는 점을 반영하되 과도한 평가를 피하기 위해 주거지역 ㎡당 권리가액의 1.6배를 적용하였다. 부대찌게(은진연립)의 상업분은 396㎡로 반영하고, 마산아구찜은 최저 지분 20㎡를 가정하였다. 존치부지와 도로·공원·주차장은 비주거 권리가액 배분 대상에서 제외하고, 비주거 개발대상 대지면적 {format(round(nonres_development_land_area_m2), big.mark = ',')}㎡를 나머지 비주거 건물의 현재 대지면적 비중으로 배분하였다. 도로는 별도 매입 대상으로 보고 약 {format(road_purchase_area_m2, big.mark = ',')}㎡에 대해 주거지역 ㎡당 권리가액의 90%를 적용하였으며, 공시지가는 ㎡당 약 {format(road_public_price_per_m2, big.mark = ',')}만원 수준으로 참고하였다.
 "))
 ```
 
@@ -1484,7 +1488,7 @@ apt_member_allocation_raw <- current_price_match_raw %>%
   )
 
 mixed_residential_allocation_raw <- residential_right_by_bldg %>%
-  filter(bldg_nm == "부대찌개건물(주거)") %>%
+  filter(bldg_nm == budae_display_name) %>%
   transmute(
     bldg_nm,
     comp_complex = "최소배정",
