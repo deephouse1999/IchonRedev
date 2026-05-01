@@ -1,0 +1,2145 @@
+﻿---
+title: "이촌동 초입 구역의 재개발 가능성 분석"
+author: "윤정환"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    code_folding: hide
+    fig_width: 7
+    fig_height: 5
+    fig_caption: true       # 추가됨
+    df_print: paged
+    keep_md: true
+---
+<style>
+.caption {
+  caption-side: top;
+}
+</style>
+
+```{r setup, include=FALSE}
+library(glue)
+library(dplyr)
+library(data.table)
+library(knitr)
+library(kableExtra)
+library(janitor)
+library(leaflet)
+library(lubridate)
+library(tidyverse)
+library(readr)
+library(magrittr)
+library(sf)
+library(jsonlite)
+library(httr)
+library(DT)
+
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+img_src_convention <- "C:/app/construct/convention.png"
+img_dir <- "assets"
+img_dst_convention <- file.path(img_dir, "convention.png")
+img_src_residential_zone <- "C:/app/construct/residential_zone.png"
+img_dst_residential_zone <- file.path(img_dir, "residential_zone.png")
+img_src_commercial_zone <- "C:/app/construct/commercial_zone.png"
+img_dst_commercial_zone <- file.path(img_dir, "commercial_zone.png")
+
+if (!dir.exists(img_dir)) {
+  dir.create(img_dir, recursive = TRUE, showWarnings = FALSE)
+}
+
+if (file.exists(img_src_convention)) {
+  file.copy(img_src_convention, img_dst_convention, overwrite = TRUE)
+}
+
+if (file.exists(img_src_residential_zone)) {
+  file.copy(img_src_residential_zone, img_dst_residential_zone, overwrite = TRUE)
+}
+
+if (file.exists(img_src_commercial_zone)) {
+  file.copy(img_src_commercial_zone, img_dst_commercial_zone, overwrite = TRUE)
+}
+
+img_convention <- img_dst_convention
+img_residential_zone <- img_dst_residential_zone
+img_commercial_zone <- img_dst_commercial_zone
+
+# 데이터 경로 설정
+data_path <- 'C:/app/construct/output/'
+
+# 데이터 로딩
+land_bulid_size_by_bldg <- read_csv(paste0(data_path,'land_bulid_size_by_bldg.csv'))
+
+colnames_kr_land_bulid_size_by_bldg_fn <- read_csv(paste0(data_path,'colnames_kr_land_bulid_size_by_bldg_fn.csv'))
+
+unit_size_list <- read_csv(paste0(data_path,'unit_size_list.csv'))
+
+geocoded_df <- read_csv(paste0(data_path,'geocoded_df.csv'))
+```
+
+
+
+# 서론
+
+이촌동은 1970년대 초부터 개발이 이루어졌으며, 한강대교로부터 한강자이아파트 앞까지 이어지는 이촌동 초입은 당시 부유층이 거주하던 이른바 ‘맨숀’이라 불리우는 저마다 개성 있는 이름의 아파트(나홀로 아파트)가 위치하고 있는 곳이다. 이 지역에는 국민은행, LG프라자 등 이촌동치고는 상대적으로 큰 상업 건물과 더불어 대한의사협회 본부 및 한국석유 본사 등도 위치하고 있다. 주거지역과 상업지역이 혼재된 이 구역은 이촌동 전체에서도 매우 특이한 물리적 구성을 가지고 있다.
+
+현재 이촌동 내 다수 단지가 재건축 또는 리모델링을 추진 중이나, 이 구역은 상대적으로 매우 조용하다. 일반적으로 나홀로 아파트는 재건축 수익성이 낮고, 건설비 상승으로 인해 개별 분담금 부담이 크기 때문에 재개발 추진이 어렵다는 인식이 있다. 그러나 상업·주거 혼재 특성을 활용한 고밀도 개발이 가능하다면, 서울의 스카이라인을 변화시킬 수 있는 상징적 사례가 될 수도 있다.
+
+본 문서는 해당 구역에 위치한 건축물 대장, 등기부등본 및 구글 맵 geocode 정보를 분석하여 토지이용 특성과 건물의 연식, 용도 등을 파악하고, 재개발 가능성을 진단하고자 한다.
+
+# 해당 구역의 토지 및 건축물 현황^[서울시 열린데이터(https://data.seoul.go.kr/)의 공공데이터 건축물대장 표제부를 대상 분석]
+
+## 총괄현황
+
+
+다음은 `mn_usg_cd_nm`(건축물 주요 용도)를 기준으로 구역 내 건축물의 대지면적(`siar`) 및 건물 연면적(`gfa`)을 합산한 결과이다.
+
+```{r description_land_building_summary, results='asis'}
+
+
+##쓸데없는 소수점 지우기
+land_bulid_size_by_bldg <- 
+  land_bulid_size_by_bldg %>%
+  mutate_at(vars(c('siar','gfa','fart_cmpttn_gfa')), function(x)trunc(x))
+
+
+df_summary <- land_bulid_size_by_bldg %>%
+  select(mn_usg_cd_nm, siar, gfa, hh_cht, ho_cnt) %>%
+  mutate(
+    siar = as.numeric(siar),
+    gfa = as.numeric(gfa),
+    hh_cht = as.numeric(hh_cht),
+    ho_cnt = as.numeric(ho_cnt)
+  ) %>%
+  group_by(mn_usg_cd_nm) %>%
+  summarise(
+    대지면적합계 = sum(siar, na.rm = TRUE),
+    건물연면적합계 = sum(gfa, na.rm = TRUE),
+    세대수합계 = sum(hh_cht, na.rm = TRUE),
+    상가호수합계 = sum(ho_cnt, na.rm = TRUE),
+    건물수 = n(),
+  ) %>%
+  arrange(desc(대지면적합계)) %>% 
+  adorn_totals('row',name='Total') %>% 
+  mutate(대지비중=round(대지면적합계/대지면적합계[mn_usg_cd_nm=='Total']*100,1))
+
+# 총계 행 추출
+total_row <- df_summary[df_summary$mn_usg_cd_nm == "Total", ]
+
+# 변수 추출
+total_siar <- format(round(total_row$대지면적합계), big.mark = ",")
+total_gfa <- format(round(total_row$건물연면적합계), big.mark = ",")
+total_hh <- format(total_row$세대수합계, big.mark = ",")
+total_ho <- format(total_row$상가호수합계, big.mark = ",")
+total_cnt <- format(total_row$건물수-2, big.mark = ",")
+road_size <-  format(df_summary$대지면적합계[df_summary$mn_usg_cd_nm=='도로'], big.mark = ",")
+road_pct <- round(df_summary$대지면적합계[df_summary$mn_usg_cd_nm=='도로']/df_summary$대지면적합계[df_summary$mn_usg_cd_nm=='Total']*100,1)
+park_size <-  format(df_summary$대지면적합계[df_summary$mn_usg_cd_nm=='공원'], big.mark = ",")
+
+# 자동 생성 텍스트 출력
+cat(glue("
+본 구역에는 다양한 용도의 건축물이 혼재되어 있으며, 주요 용도별로 대지면적, 건물 연면적, 세대수, 호수 등을 집계하였다.  
+
+- 전체 구역의 **총 대지면적은 약 {total_siar}㎡**, **연면적은 약 {total_gfa}㎡**, 대지 중 주거구역은 2/3에 해당하며, 상업구역(업무, 근린)은 15% 수준이다.  
+- **총 세대수는 {total_hh}세대**, **상가 호수는 {total_ho}호**이다.  
+- **총 건물 수는 {total_cnt}동**(도로, 공원 제외)이다.
+- **기타 기반시설인 도로는 {road_size}㎡, 공원은 {park_size}㎡**이다.
+
+이러한 통계를 기반으로 해당 구역의 **주거·상업 혼재 특성**을 파악할 수 있으며, 재개발 및 복합개발 가능성 판단을 위한 기초자료로 활용할 수 있다.
+"))
+
+# 표 출력
+kable(
+  df_summary %>%
+    mutate_if(is.numeric, ~format(., big.mark = ",")),
+  format = "html",
+  caption = "표 1. 이촌동 초입구역 건축물 용도별 대지면적, 연면적 및 세대/호수 요약",
+  position = "top",
+  align = c("l", rep("r", ncol(df_summary) - 1))  # 왼쪽 1개 + 오른쪽 나머지
+) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+```{r leaflet_building_map, fig.cap = "그림 1. 이촌동 초입구역 건축물별 위치 및 용도 시각화 지도"}
+
+leaflet(land_bulid_size_by_bldg) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    lng = ~long_num,
+    lat = ~lat_num,
+    radius = 6,
+    popup = ~paste0(
+      "<b>", bldg_nm, "</b><br>",
+      "용도: ", mn_usg_cd_nm, "<br>",
+      "대지면적: ", siar, "㎡<br>",
+      "세대수: ", hh_cht, ", 호수: ", ho_cnt
+    ),
+    color = ~case_when(
+      mn_usg_cd_nm == "공동주택" ~ "red",
+      grepl('근린생활',mn_usg_cd_nm) ~ "blue",
+      mn_usg_cd_nm == "업무시설" ~ "green",
+      TRUE ~ "gray"
+    ),
+    fillOpacity = 0.7
+  )
+```
+
+### 주거건물 개요
+
+```{r summarize_apt_final_corrected, message=FALSE , results='asis'}
+current_year <- year(Sys.Date())
+
+# 1. 요약 테이블 생성
+apt_summary <- land_bulid_size_by_bldg %>%
+  filter(mn_usg_cd_nm == "공동주택") %>%
+  mutate(
+    siar = as.numeric(siar),
+    fart_cmpttn_gfa = as.numeric(fart_cmpttn_gfa),
+    hh_cht = as.numeric(hh_cht),
+    use_aprv_ymd = as.character(use_aprv_ymd),
+    const_year = as.numeric(substr(use_aprv_ymd, 1, 4)),
+    age = current_year - const_year
+  ) %>%
+  group_by(bldg_nm) %>%
+  summarise(
+    hh = sum(hh_cht, na.rm = TRUE),
+    land_area = sum(siar, na.rm = TRUE),
+    floor_area = sum(fart_cmpttn_gfa, na.rm = TRUE),
+    far = round(floor_area / land_area * 100, 1),
+    year_built = min(const_year, na.rm = TRUE),
+    avg_age = round(mean(age, na.rm = TRUE), 1),
+    ###상가가 붙어있는 한강제일맨션 및 장미맨션 용적률을 공부상 가구수 비율(제일 24/29)로 줄인다
+    avg_land_area=ifelse(bldg_nm=='한강제일맨션',round(land_area/hh,2)*0.8,round(land_area/hh,2))
+
+  ) %>%
+  mutate(age_group = if_else(avg_age >= 30, "30년 이상", "30년 미만"))
+
+# 2. 합계 행
+summary_rows <- apt_summary %>%
+  group_by(age_group) %>%
+  summarise(
+    bldg_nm = paste0("합계 (", first(age_group), ")"),
+    hh = sum(hh, na.rm = TRUE),
+    land_area = sum(land_area, na.rm = TRUE),
+    floor_area = sum(floor_area, na.rm = TRUE),
+    far = round(mean(far, na.rm = TRUE), 1),
+    year_built = NA,
+    avg_age = round(mean(avg_age, na.rm = TRUE), 1),
+    ###상가가 붙어있는 한강제일맨션 및 장미맨션 용적률을 공부상 가구수 비율(제일 24/29)로 줄인다
+    avg_land_area=ifelse(bldg_nm=='한강제일맨션',round(land_area/hh,2)*0.8,round(land_area/hh,2))
+  ) %>%
+  select(-age_group)
+
+# 3. 결합
+apt_summary_final_eng <- apt_summary %>%
+  ungroup() %>%
+  select(-age_group) %>%
+  bind_rows(summary_rows) %>%
+  mutate(
+    hh = format(hh, big.mark = ","),
+    land_area = format(land_area, big.mark = ","),
+    floor_area = format(floor_area, big.mark = ","),
+    far = format(far, big.mark = ","),
+    avg_age = format(avg_age, big.mark = ","),
+    year_built = ifelse(is.na(year_built), "–", as.character(year_built)),
+    avg_land_area=ifelse(is.na(avg_land_area), "–", as.character(avg_land_area))
+  ) %>%
+  relocate(bldg_nm, .before = everything()) %>%
+  arrange(desc(grepl("^합계", bldg_nm)))
+apt_summary_final <- apt_summary_final_eng
+
+# 4. 컬럼명 한글 매핑
+colnames(apt_summary_final) <- c("건물명", "세대수", "대지면적", "연면적", "용적률", "건축연도", "평균연령","가구당대지면적")
+
+# 5. 강조 조건: 30년 미만만 빨간색 (합계 제외)
+highlight_row <- grepl("^[^합계].*", apt_summary_final$건물명) &
+                 suppressWarnings(as.numeric(apt_summary_final$평균연령) < 30)
+
+
+# 6. 통계량 텍스트
+# 총 단지 수
+num_buildings <- nrow(apt_summary)
+
+# 평균 연령
+avg_building_age <- round(mean(apt_summary$avg_age, na.rm = TRUE), 1)
+
+# 총 대지면적 , 연면적 , 가구수
+total_land_area <- sum(apt_summary$land_area, na.rm = TRUE)
+total_floor_area <- sum(apt_summary$floor_area, na.rm = TRUE)
+total_households <- sum(apt_summary$hh, na.rm = TRUE)
+
+
+# 산술적 용적률
+total_far <- round(total_floor_area / total_land_area * 100, 1)
+
+# 산술적 가구당대지지분
+total_land_own <- round(total_land_area / total_households, 1)
+
+
+# 용적률 상위 3개 단지
+top3_far <- apt_summary %>%
+  arrange(desc(far)) %>%
+  slice_head(n = 3) %>%
+  pull(bldg_nm) %>%
+  paste(collapse = ", ")
+
+# 연령이 짧은 3개 단지
+top3_newest <- apt_summary %>%
+  arrange(avg_age) %>%
+  slice_head(n = 3) %>%
+  pull(bldg_nm) %>%
+  paste(collapse = ", ")
+
+
+# 대지지분이 가장 작은단지 3개
+top3_smallest_land <- apt_summary %>%
+  arrange(avg_land_area) %>%
+  slice_head(n = 3) %>%
+  pull(bldg_nm) %>%
+  paste(collapse = ", ")
+
+
+# 자동 생성 텍스트 출력
+cat(glue("
+공동주택단지는 총 {num_buildings}개 단지가 있으며 평균 연령은 {avg_building_age}년이다. 
+대지면적은 총 {format(total_land_area, big.mark = ',')}㎡, 건물면적은 총 {format(total_floor_area, big.mark = ',')}㎡이고, 
+산술적 용적률은 약 {total_far}%이며, 가구당 단순 대지지분은 {total_land_own}㎡이다.
+
+- 용적률이 높은 3개 단지는 **{top3_far}**이며, 가구당 대지지분이 작은 단지는 **{top3_smallest_land}**이다.
+- 건축연령이 짧은 3개 단지는 **{top3_newest}**이다. 월드메르디앙(구 골든맨션)은 리모델링으로 건축물대장상 구 건물의 정보가 승계되고 있다.  
+"))
+
+
+# 6. 테이블 출력
+kable(
+  apt_summary_final,
+  format = "html",
+  caption = "표 2. 공동주택 단지별 세대수, 연면적, 용적률 및 평균 연령",
+  align = c("l", rep("r", 7)),
+  position = "top"
+) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+  row_spec(which(highlight_row), bold = TRUE, color = "red")
+```
+
+### 비주거 건물 개요
+
+```{r summarize_commercial_final, message=FALSE, results='asis'}
+current_year <- year(Sys.Date())
+
+# 1. 요약 테이블 생성
+comm_summary <- land_bulid_size_by_bldg %>%
+  filter(!grepl("공동주택", mn_usg_cd_nm)) %>%
+  mutate(
+    siar = as.numeric(siar),
+    fart_cmpttn_gfa = as.numeric(fart_cmpttn_gfa),
+    use_aprv_ymd = as.character(use_aprv_ymd),
+    const_year = as.numeric(substr(use_aprv_ymd, 1, 4)),
+    age = current_year - const_year
+  ) %>%
+  group_by(bldg_nm) %>%
+  summarise(
+    land_area = sum(siar, na.rm = TRUE),
+    floor_area = sum(fart_cmpttn_gfa, na.rm = TRUE),
+    far = round(floor_area / land_area * 100, 1),
+    year_built = min(const_year, na.rm = TRUE),
+    avg_age = round(mean(age, na.rm = TRUE), 1)
+  ) %>%
+  mutate(age_group = if_else(avg_age >= 30, "30년 이상", "30년 미만"))
+
+# 2. 합계 행
+comm_summary_rows <- comm_summary %>%
+  group_by(age_group) %>%
+  summarise(
+    bldg_nm = paste0("합계 (", first(age_group), ")"),
+    land_area = sum(land_area, na.rm = TRUE),
+    floor_area = sum(floor_area, na.rm = TRUE),
+    far = round(mean(far, na.rm = TRUE), 1),
+    year_built = NA,
+    avg_age = round(mean(avg_age, na.rm = TRUE), 1)
+  ) %>%
+  select(-age_group)
+
+# 3. 결합
+comm_summary_final <- comm_summary %>%
+  ungroup() %>%
+  select(-age_group) %>%
+  bind_rows(comm_summary_rows) %>%
+  mutate(
+    land_area = format(land_area, big.mark = ","),
+    floor_area = format(floor_area, big.mark = ","),
+    far = format(far, big.mark = ","),
+    avg_age = format(avg_age, big.mark = ","),
+    year_built = ifelse(is.na(year_built), "–", as.character(year_built))
+  ) %>%
+  relocate(bldg_nm, .before = everything()) %>%
+  arrange(desc(grepl("^합계", bldg_nm)))
+
+# 4. 컬럼명 한글 매핑
+colnames(comm_summary_final) <- c("건물명", "대지면적", "연면적", "용적률", "건축연도", "평균연령")
+
+# 5. 강조 조건: 30년 미만 상업시설 붉은색 강조 (합계 제외)
+highlight_row_comm <- grepl("^[^합계].*", comm_summary_final$건물명) &
+  suppressWarnings(as.numeric(comm_summary_final$평균연령) < 30)
+
+# 6. 통계량 텍스트
+num_buildings_comm <- nrow(comm_summary)
+avg_comm_age <- round(mean(comm_summary$avg_age, na.rm = TRUE), 1)
+total_land_area_comm <- sum(comm_summary$land_area, na.rm = TRUE)
+total_floor_area_comm <- sum(comm_summary$floor_area, na.rm = TRUE)
+total_far_comm <- round(total_floor_area_comm / total_land_area_comm * 100, 1)
+top3_far_comm <- comm_summary %>%
+  arrange(desc(far)) %>%
+  slice_head(n = 3) %>%
+  pull(bldg_nm) %>%
+  paste(collapse = ", ")
+top3_newest_comm <- comm_summary %>%
+  arrange(avg_age) %>%
+  slice_head(n = 3) %>%
+  pull(bldg_nm) %>%
+  paste(collapse = ", ")
+
+# 자동 생성 텍스트 출력 (비주거건물용)
+cat(glue("
+비주거건물은 총 {num_buildings_comm}개 동이 있으며 평균 연령은 {avg_comm_age}년이다. 대지면적은 총 {format(total_land_area_comm, big.mark = ',')}㎡, 건물면적은 총 {format(total_floor_area_comm, big.mark = ',')}㎡이고, 산술적 용적률은 약 {total_far_comm}%이다.  
+
+- 용적률이 높은 3개 건물은 **{top3_far_comm}**이며, 건축연령이 짧은 3개 건물은 **{top3_newest_comm}**이다.  
+"))
+
+# 7. 출력
+table_caption <- "표 3. 상업용 건물별 대지면적, 연면적, 용적률 및 평균 연령"
+kable(
+  comm_summary_final,
+  format = "html",
+  caption = table_caption,
+  align = c("l", rep("r", 5)),
+  position = "top"
+) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+  row_spec(which(highlight_row_comm), bold = TRUE, color = "red")
+```
+
+#  도시정비법상 개별단지 재건축 검토
+
+
+```{r individual_recon, message=FALSE, results='asis'}
+
+unit_size_list <- unit_size_list %>%
+  mutate(size = as.numeric(size), units = as.numeric(units))
+
+unit_summary <- unit_size_list %>%
+  group_by(bldg_nm) %>%
+  summarise(
+    total_units = sum(units),
+    total_area = sum(size * units),  # 공급면적 합계 (m2 기준)
+    avg_unit_area = round(total_area / total_units, 1)
+  )
+
+# 2. apt_summary_final의 일부 정보 불러오기 (가구당 토지지분 등)
+apt_info <- apt_summary_final_eng %>%
+  filter(!grepl("합계", bldg_nm)) %>%
+  select(bldg_nm, far, avg_land_area) %>%
+  rename(
+    current_far = far,
+    land_per_unit = avg_land_area
+  ) %>%
+  mutate(
+    current_far = as.numeric(gsub(",", "", current_far)),
+    land_per_unit = as.numeric(gsub(",", "", land_per_unit))
+  )
+
+# 3. 통합 및 재건축 조건 반영
+reconst_sim <- unit_summary %>%
+  left_join(apt_info, by = "bldg_nm") %>%
+  mutate(
+    max_far = 300,
+    inc_far = pmax(0, max_far - current_far),
+    inc_far_net = inc_far * 0.8,  # 공공기여 20% 차감
+    new_far = min(current_far + inc_far_net, max_far),
+    # 재건축 후 배정가능 연면적 (㎡)
+    new_floor_area = trunc(land_per_unit * new_far / 100),
+    # 평당 건축비: 600만 원, 연면적 기준 (3.3㎡) 공용면적을 위해 연면적 *1.5
+    construction_cost = new_floor_area * 1.5*8000000/3.3,
+    supervision_cost = construction_cost * 0.1,
+        # 평당 철거비: 200만 원, 연면적 기준 (3.3㎡) 공용면적을 위해 연면적 *1.5
+    demolition_cost=avg_unit_area*10000000/3.3,
+    total_cost = round((construction_cost + supervision_cost+demolition_cost)/100000000,1),  # 가구당 부담금 (만원)
+    supply_area_change = round(new_floor_area - avg_unit_area, 1),
+    supply_area_change_pct=round(supply_area_change/avg_unit_area*100,1)
+  ) %>%
+  select(
+    bldg_nm, total_units, avg_unit_area, new_floor_area, 
+    supply_area_change_pct, total_cost
+  ) %>%
+  arrange(desc(supply_area_change_pct))
+
+
+cat("
+아래 시뮬레이션은 다음과 같은 가정에 기반한다.
+
+- 기존 용도지역은 제3종 일반주거지역이며, 법정 최대 용적률은 300%로 가정한다.
+- 가구수 변동이 없는 1:1 재건축으로 본다.  
+- 인센티브 증가 용적률의 20%는 공공기여로 차감한다.  
+- 공급면적은 기존 네이버 부동산 기준 면적을 사용하였으며, 신축 시 공용면적 포함 비율을 고려해 1.5배로 환산한다.  
+- 평당 건축비는 800만 원, 철거비는 100만 원, 감리비는 총 건축비의 10%로 추정한다.  
+")
+
+# 최대/최소 강조 단지 계산
+worst_cost <- reconst_sim %>% arrange(desc(total_cost)) %>% slice(1)
+worst_area <- reconst_sim %>% arrange(supply_area_change_pct) %>% slice(1)
+
+# 요약 텍스트
+cat(glue::glue("
+재건축 시뮬레이션 결과, 가구당 공급면적은 평균 {round(mean(reconst_sim$supply_area_change_pct, na.rm = TRUE), 1)}% 변동하며, 예상 가구당 총 부담금은 평균 약 {round(mean(reconst_sim$total_cost, na.rm = TRUE), 1)}억 원 수준이다.  
+
+특히 전체 단지 중 상당수 단지가 현재 대비 면적 감소가 일어나게 되며, **{worst_area$bldg_nm}** 단지는 공급면적이 약 {round(abs(worst_area$supply_area_change_pct), 1)}% 감소할 것으로 나타난다.  
+
+이는 이 지역의 기존 건물의 높은 용적률로 인해 높은 분담금에도 불구하고 기존 주거용 건물 용적률 체계에서는 재건축 후 주거 평형이 축소되는 구조적 한계가 있고, 결국 경제성이 낮음을 알 수 있다.
+"))
+
+
+
+
+kable(
+  reconst_sim %>%
+    mutate(
+      total_cost = paste0(round(total_cost, 1), "억"),
+      supply_area_change_pct = paste0(supply_area_change_pct, "%")
+    ),
+  caption = "표 4. 재건축 시뮬레이션 결과: 예상 공급면적 변화 및 가구당 부담금",
+  align = c("l", "r", "r", "r", "r", "r"),
+  format = "html",
+  position = "top"
+) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+  row_spec(which(reconst_sim$bldg_nm %in% c(worst_cost$bldg_nm, worst_area$bldg_nm)),
+           bold = TRUE, color = "red")
+
+# 칼럼명 한글로 교체
+
+```
+
+
+# 실거래가 상대가격 변화
+
+```{r real_price_relative_plot, message=FALSE, warning=FALSE, results='asis'}
+
+cat(glue::glue("
+이러한 낮은 재건축 수익성으로 이촌동 다른 단지대비 상대가치는 지속적으로 낮아지고 있다다.  
+
+아래그림은 개별단지중 그나마 대지면적이 높아 수익성이 좋은 장미맨션과 면적이 가장 큰 정우맨션의 거래시점 한가람 아파트 59제곱미터 중간값과 대상물건 거래값의 비율이다. 장미맨션의 최초 거래가(2010년 8월)를 예로들면, 당시 장미맨션 거래가는 15.9억원이였으며 해당월 비교대상 거래가는 5.6억원으로 배율은 280%였다. 즉, 해당시기 장미맨션 1채 매각을 통해 한가람 59제곱미터 2.8채를 살 수 있었으나, 현재는 1.5채도 구매할수 없음을 의미하며, 정우의 경우 오히려 가격이 역전되었다.
+"))
+
+source("C:/app/construct/real_price_ratio_plot.R", local = knitr::knit_global(), encoding = "UTF-8")
+
+focus_ratio_plot
+```
+
+```{r current_price_match_table, message=FALSE, warning=FALSE, results='asis'}
+if (!exists("current_price_match_table") || nrow(current_price_match_table) == 0) {
+  cat("현재 대상가액과 최근 비교단지 거래가를 매칭할 수 있는 거래 조합이 부족하여 매칭 표를 생성하지 못했다.")
+} else {
+  current_price_summary <- current_price_match_table %>%
+    mutate(
+      target_value_price_num = readr::parse_number(target_value_price),
+      comp_recent_price_num = readr::parse_number(comp_recent_price)
+    ) %>%
+    summarise(
+      target_min = min(target_value_price_num, na.rm = TRUE) / 10000,
+      target_max = max(target_value_price_num, na.rm = TRUE) / 10000,
+      comp_min = min(comp_recent_price_num, na.rm = TRUE) / 10000,
+      comp_max = max(comp_recent_price_num, na.rm = TRUE) / 10000
+    )
+
+  cat(glue::glue("
+아래 표는 2026년 5월 1일 확인 호가에 5% 네고율을 반영한 현재 대상가액을 기준으로, 최근 거래된 비교단지 중 총액 차이가 가장 작은 평형을 매칭한 것이다. 대상 단지 적용가격은 약 {round(current_price_summary$target_min, 1)}억~{round(current_price_summary$target_max, 1)}억 원, 매칭된 비교대상 거래가격은 약 {round(current_price_summary$comp_min, 1)}억~{round(current_price_summary$comp_max, 1)}억 원 범위이다.
+"))
+
+  current_price_match_table %>%
+    select(
+      bldg_nm,
+      target_value_area,
+      target_value_price,
+      comp_complex,
+      comp_recent_area,
+      comp_recent_month,
+      comp_recent_price,
+      price_gap,
+      price_gap_pct,
+      current_shortfall_price
+    ) %>%
+    set_colnames(c(
+      "대상 단지", "대상 면적", "대상 적용가격",
+      "매칭 단지", "매칭 면적", "매칭 거래월", "매칭 거래가",
+      "가격차", "가격차율", "미달금액"
+    )) %>%
+    kable(
+      format = "html",
+      caption = "표 6. 현재 대상가액 기준 최근 비교단지 유사 가격대 매칭",
+      align = "c"
+    ) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      font_size = 12
+    ) %>%
+    scroll_box(width = "100%")
+}
+```
+
+#  해당구역의 개발계획(도정법상 지구단위계획) 검토 
+
+```{r const_gvt_plan, message=FALSE, results='asis'}
+
+cat("
+해당구역은 대부분 서빙고아파트지구 지구단위계획 구역에 포함되어 있다. 해당구역은 지구단위 계획상 3종 주거지로 기본용적률 250%, 기부채납 수준에 따라 300%를 적용받는다.
+
+최근 발표된 지구단위계획서에는 이촌역 인근 재건축단지와 한강맨션등 상대적으로 대규모 단지에 대한 정비계획안을 담고 있으며, 해당구역에 대해서는 같은 단지이나 필지가 수 개로 분할되어 있는 미주아파트에 대해서 통합개발을 권고하는 수준으로만 언급하고 넘어가는 수준이다. 즉 현재의 도시계획상으로는 개별 재건축이 불가피하며, 기껏해봤자 받을수 있는 최대 용적률은 300% 수준에 불과하다.
+
+다만, 눈 여겨볼 만한 사항이 있는데, 다름아닌 특별계획 가능구역이다. 특별계획구역은 지구단위계획이 설정된 구역 내에서 해당 지구단위계획의 일반적인 규율 내용과 다른 규율을 할 수있도록 설정한 특별한 구역을 뜻하며, 통상 지구단위 계획의 대상구역 중 높은 개발 밀도에 대한 수요가 있는 곳에 지정된다.^[국토계획법 시행령 42조의3 제2항 제4호에서 공공사업의 시행, 대형건축물의 건축 또는 2 필지 이상의 토지소유자의 공동개발등을 위하여 필요한 경우로 정하고 있는데 이는 특별계획구역에 대한 가장 상위의 규정임(특별계획구역의 개념과 법적 성질, 이수안외 서울대학교法學 제 64권 제3호 2023년 9월 111~142면)]
+
+해당 지구단위 계획에서는 특별계획 가능구역을 이촌시장 일대와 서빙고역 인근 소규모 주택지대로 지정하였으며, 주요 지정내용은 다음과 같다.
+")
+
+tab_special <- data.frame(
+ zone=c('이촌시장','서빙고인근'),
+ size=c(9488,4945),
+ far=c('400~600','400~600'),
+ rsn=c('역세권변 블록 단위의 계획적 개발을 유도',
+       '과소필지, 맹지 등이 밀집한 지역으로 주거환경 개선을 위하여 통합 개발을 유도'),
+ condition=c('없음','역세권 장기전세주택 ')
+) 
+
+
+
+kable(tab_special %>% 
+        set_colnames(c('구역','크기','용적률','지정사유','조건')),
+        caption = "표 5. 서빙고지구 특별계획구역 검토",
+)
+
+cat("
+즉, 해당구역은 건축계획서가 특별계획구역으로의 요건을 충족할 경우 기존 300%보다 훨씬 높은 용적률을 적용받을 수 있는 것이다.
+")
+
+
+```
+
+# 특별계획구역 재개발 사례 검토
+
+## 구역내 용도별 분할
+
+```{r redevelopment_zone_map, message=FALSE, warning=FALSE, result='asis'}
+
+
+cat("
+해당구역을 아래와 같이 주거, 업무, 공공, 시유지로 구분하였다. 가정은 국유지인 이촌로 54,58,62 및 64길에 해당하는 8,000 여 제곱미터를 매입하고 기존 빌라, 타워, 퀸즈리버빌은 개발이익환수 차원에서 시에 기부채납하는 것을 가정하였다. 구분결과 주거지 4.4만, 상업용지 1만, 기존시유지를 포함한 공공용지 1.8만 제곱미터의 구역으로 구분되었다.
+
+기존 대한의사협회와 종교시설인 충신교회는 존치건물로 가정하였다.
+")
+
+
+source("C:/app/construct/재개발zone표시.R", local = knitr::knit_global())
+redevelop_zone_map
+```
+
+## 사례 벤치마킹
+
+
+
+```{r special_zone, message=FALSE, include=FALSE}
+
+###특별계획구역에 대한 일반정보 파일 
+json_data <- fromJSON('C:/app/construct/construct_seoul/seoul_special_zone.json')
+
+
+seoul_special_zone_tb <- json_data$DATA
+
+zone_name_col <- intersect(
+  c("lbl_nm", "rgn_nm", "pstn_nm", "DGM_NM"),
+  names(seoul_special_zone_tb)
+)[1]
+
+zone_area_col <- intersect(
+  c("area", "area_exs", "area_chg_aftr", "DGM_AR", "SHAPE_AREA"),
+  names(seoul_special_zone_tb)
+)[1]
+
+if (is.na(zone_name_col) || is.na(zone_area_col)) {
+  stop("특별계획구역 JSON에서 구역명 또는 면적 컬럼을 찾지 못했습니다.")
+}
+
+seoul_special_zone_tb <- seoul_special_zone_tb %>%
+  mutate(
+    zone_nm = .data[[zone_name_col]],
+    zone_area = readr::parse_number(as.character(.data[[zone_area_col]]))
+  )
+
+total_special_zone <- sum(seoul_special_zone_tb$zone_area, na.rm = TRUE)
+total_special_zone_cnt <- nrow(seoul_special_zone_tb)
+
+lg_special_zone <- seoul_special_zone_tb %>% 
+  select(zone_nm, zone_area) %>%
+  arrange(desc(zone_area)) %>%
+  slice_head(n = 5) %>%
+  mutate(zone_area = format(trunc(zone_area), big.mark = ","))
+
+###해당파일은 구체적으로 어떤 아파트 단지가 포함되었는지 알 수 없다.
+###해당 구역의 좌표를 찾아본다.
+###좌표 데이터는 공공데이터 사이트 안에 UPIS_C_UQ165에 보관되어 있다.
+
+spq_sf <- st_read("C:/app/construct/construct_seoul/zonemap/UPIS_C_UQ165.shp", options = "ENCODING=CP949")
+
+nrow_spq_sf <- nrow(spq_sf)
+size_spq_sf <- trunc(sum(spq_sf$SHAPE_AREA))
+txt_size_spq_sf <- format(size_spq_sf,big.mark=",")
+mean_size_spq_sf <- mean(spq_sf$SHAPE_AREA)
+txt_mean_size_spq_sf <-  format(mean_size_spq_sf,big.mark=",")
+
+
+
+similar_special_zone <- spq_sf %>% 
+  filter(SHAPE_AREA>50000& SHAPE_AREA<90000)
+
+
+
+# 서울시 전체 특별계획구역 지정 현황과 대형 구역 목록은 본문 흐름에서 제외한다.
+# 아래 청크들은 spq_sf와 similar_special_zone 객체만 후속 공간조인에 사용한다.
+```
+
+
+```{r seoul_recon_status_tb, include=FALSE}
+###재건축현황정보 적재
+json_data <- fromJSON('C:/app/construct/construct_seoul/seoul_recon_status.json')
+seoul_recon_status_tb <- json_data$DATA
+
+# 서울시 전체 재개발·재건축 현황 기초분석은 본문 흐름에서 제외한다.
+# 이 청크는 뒤쪽 특별계획구역 공간조인에 필요한 원천 데이터만 적재한다.
+
+```
+
+
+```{r geocodeget, results='asis'}
+
+
+####이 부분은 api호출에 많은 시간이 소모되므로 실행은 이촌동부동산.R로 보내고 생성된 파일을 environment에 loading하는 것으로 
+# fn_get_coord_vworld <- function(address, api_key) {
+#   vworld_url <- "https://api.vworld.kr/req/address"
+#   
+#   res <- GET(vworld_url,
+#              query = list(
+#                service = "address",
+#                request = "getcoord",
+#                type = "PARCEL",  
+#                format = "json",
+#                crs = "epsg:4326",
+#                key = api_key,
+#                address = address
+#              ))
+#   
+#   json <- fromJSON(content(res, "text", encoding = "UTF-8"))
+#   
+#     if (is.null(json$response$status) || json$response$status != "OK" ||
+#       is.null(json$response$result) || length(json$response$result) == 0) {
+#     return(data.frame(address = address, x = NA, y = NA))  
+#   } else {
+#     coord <- json$response$result$point
+#     return(data.frame(address = address,
+#                       x = as.numeric(coord$x),
+#                       y = as.numeric(coord$y)))
+#   }
+# }
+# my_key <- "FF83FA47-E751-397A-90B7-147501BD6086"
+# # 전체 주소 만들기
+# address_list <- paste0("서울특별시 ", seoul_recon_status_tb$cgg_nm, " ", seoul_recon_status_tb$rprs_lotno)
+# 
+# # map_dfr + tryCatch로 안전하게 반복 요청
+# geocoded_df <- map_dfr(address_list, function(addr) {
+#   tryCatch(
+#     fn_get_coord_vworld(addr, my_key),
+#     error = function(e) {
+#       message("Error at: ", addr)
+#       return(data.frame(address = addr, x = NA, y = NA))
+#     }
+#   )
+# })
+# 
+# write.csv(geocoded_df, paste0(data_path,'geocoded_df.csv'))
+# 대표지번 주소와 좌표 조인
+geocoded_df_clean <- geocoded_df %>%
+  mutate(
+    x = as.numeric(x),
+    y = as.numeric(y)
+  ) %>%
+  select(address, x, y) %>%
+  distinct(address, .keep_all = TRUE)
+
+seoul_recon_status_with_coord <- seoul_recon_status_tb %>%
+  mutate(full_address = paste0("서울특별시 ", cgg_nm, " ", rprs_lotno)) %>%
+  left_join(geocoded_df_clean, by = c("full_address" = "address"))
+  ##필수 항목만 select
+
+# 좌표 조인 미리보기는 본문 흐름에서 제외한다.
+
+recon_status_point_sf <- seoul_recon_status_with_coord %>%
+  filter(!is.na(x), !is.na(y)) %>%
+  st_as_sf(coords = c("x", "y"), crs = 4326, remove = FALSE)
+
+old_s2 <- sf::sf_use_s2()
+sf::sf_use_s2(FALSE)
+
+spq_for_join <- spq_sf %>%
+  st_transform(4326) %>%
+  st_make_valid() %>%
+  filter(!st_is_empty(geometry)) %>%
+  select(any_of(c("DGM_NM", "DGM_AR", "CREATE_DAT")))
+
+recon_status_in_special_zone <- st_join(
+  recon_status_point_sf,
+  spq_for_join,
+  join = st_intersects,
+  left = FALSE
+) %>%
+  st_drop_geometry()
+
+sf::sf_use_s2(old_s2)
+
+# 전체 특별계획구역 내 사업지 목록은 본문에서 제외하고,
+# 아래 유사 규모 사례 검토에 필요한 객체만 사용한다.
+
+cat("
+그렇다면 서울시 특별계획구역 중 이촌동 초입구역과 비슷한 규모(약 4.3만㎡ ± 1만㎡)의 특별계획구역 내에 속한 조합의 재건축 관련 정보를 살펴볼 필요가 있다. 아래 표는 대표지번 좌표가 해당 규모의 특별계획구역 안에 포함되는 주거성 재개발·재건축 사업지를 추출한 것이다.
+")
+
+similar_size_recon_in_special_zone <- recon_status_in_special_zone %>%
+  mutate(
+    special_zone_area = readr::parse_number(as.character(DGM_AR)),
+    fart_num = readr::parse_number(as.character(fart)),
+    ownr_cnt_num = readr::parse_number(as.character(ownr_cnt)),
+    mtnc_area_num = readr::parse_number(as.character(mtnc_area))
+  ) %>%
+  filter(
+    !is.na(special_zone_area),
+    !is.na(mtnc_area_num),
+    dplyr::between(special_zone_area, 33000, 53000),
+    !stringr::str_detect(dplyr::coalesce(biz_se, ""), "도시정비형")
+  )
+
+if (nrow(similar_size_recon_in_special_zone) == 0) {
+  cat("
+이촌동 초입구역과 유사한 규모의 특별계획구역 안에 대표지번이 위치한 재개발·재건축 사업지는 확인되지 않았다.
+")
+} else {
+  similar_size_recon_summary <- similar_size_recon_in_special_zone %>%
+    summarise(
+      사례수 = n(),
+      특별계획구역수 = n_distinct(DGM_NM),
+      평균_특별계획구역면적 = mean(special_zone_area, na.rm = TRUE),
+      평균_정비구역면적 = mean(mtnc_area_num, na.rm = TRUE),
+      평균_용적률 = mean(fart_num, na.rm = TRUE),
+      중앙값_용적률 = median(fart_num, na.rm = TRUE),
+      최대_용적률 = max(fart_num, na.rm = TRUE),
+      평균_조합원수 = mean(ownr_cnt_num, na.rm = TRUE),
+      중앙값_조합원수 = median(ownr_cnt_num, na.rm = TRUE)
+    ) %>%
+    mutate(
+      across(
+        everything(),
+        ~ ifelse(
+          is.nan(.x) | is.infinite(.x),
+          NA,
+          .x
+        )
+      ),
+      평균_특별계획구역면적 = format(round(평균_특별계획구역면적), big.mark = ","),
+      평균_정비구역면적 = format(round(평균_정비구역면적), big.mark = ","),
+      평균_용적률 = paste0(round(평균_용적률, 1), "%"),
+      중앙값_용적률 = paste0(round(중앙값_용적률, 1), "%"),
+      최대_용적률 = paste0(round(최대_용적률, 1), "%"),
+      평균_조합원수 = format(round(평균_조합원수), big.mark = ","),
+      중앙값_조합원수 = format(round(중앙값_조합원수), big.mark = ",")
+    )
+
+  kable(
+    similar_size_recon_summary,
+    format = "html",
+    caption = "표 8. 유사 규모 특별계획구역 내 재개발·재건축 사업 요약",
+    align = "c"
+  ) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      font_size = 12
+    )
+
+  similar_size_recon_in_special_zone %>%
+    transmute(
+      특별계획구역 = DGM_NM,
+      특별계획구역면적 = format(round(special_zone_area), big.mark = ","),
+      사업명 = asct_nm,
+      정비구역명 = mtnc_area_nm,
+      사업구분 = biz_se,
+      진행단계 = prgrs_seq,
+      상태 = stts,
+      대표지번 = full_address,
+      정비구역면적 = format(round(mtnc_area_num), big.mark = ","),
+      용적률 = ifelse(is.na(fart_num), "-", paste0(round(fart_num, 1), "%")),
+      조합원수 = ifelse(is.na(ownr_cnt_num), "-", format(round(ownr_cnt_num), big.mark = ","))
+    ) %>%
+    arrange(특별계획구역, 사업명) %>%
+    kable(
+      format = "html",
+      caption = "표 9. 유사 규모 특별계획구역 내 재개발·재건축 사업 사례",
+      align = "c"
+    ) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      font_size = 12
+    ) %>%
+    scroll_box(width = "100%")
+}
+
+cat("
+
+비주거의 경우 이촌동 초입구역 내 비주거 면적이 약 1만㎡ 수준이라는 점을 고려하여, 특별계획구역 면적 1만㎡ ± 5천㎡ 범위에 속한 도시정비형 사업을 별도로 확인하였다.
+")
+
+similar_size_urban_recon_in_special_zone <- recon_status_in_special_zone %>%
+  mutate(
+    special_zone_area = readr::parse_number(as.character(DGM_AR)),
+    fart_num = readr::parse_number(as.character(fart)),
+    ownr_cnt_num = readr::parse_number(as.character(ownr_cnt)),
+    mtnc_area_num = readr::parse_number(as.character(mtnc_area))
+  ) %>%
+  filter(
+    !is.na(special_zone_area),
+    !is.na(mtnc_area_num),
+    dplyr::between(special_zone_area, 5000, 15000),
+    stringr::str_detect(dplyr::coalesce(biz_se, ""), "도시정비형")
+  )
+
+if (nrow(similar_size_urban_recon_in_special_zone) == 0) {
+  cat("
+비주거 면적과 유사한 규모의 특별계획구역 안에 대표지번이 위치한 도시정비형 사업지는 확인되지 않았다.
+")
+} else {
+  similar_size_urban_recon_summary <- similar_size_urban_recon_in_special_zone %>%
+    summarise(
+      사례수 = n(),
+      특별계획구역수 = n_distinct(DGM_NM),
+      평균_특별계획구역면적 = mean(special_zone_area, na.rm = TRUE),
+      평균_정비구역면적 = mean(mtnc_area_num, na.rm = TRUE),
+      평균_용적률 = mean(fart_num, na.rm = TRUE),
+      중앙값_용적률 = median(fart_num, na.rm = TRUE),
+      최대_용적률 = max(fart_num, na.rm = TRUE),
+      평균_조합원수 = mean(ownr_cnt_num, na.rm = TRUE),
+      중앙값_조합원수 = median(ownr_cnt_num, na.rm = TRUE)
+    ) %>%
+    mutate(
+      across(
+        everything(),
+        ~ ifelse(
+          is.nan(.x) | is.infinite(.x),
+          NA,
+          .x
+        )
+      ),
+      평균_특별계획구역면적 = format(round(평균_특별계획구역면적), big.mark = ","),
+      평균_정비구역면적 = format(round(평균_정비구역면적), big.mark = ","),
+      평균_용적률 = paste0(round(평균_용적률, 1), "%"),
+      중앙값_용적률 = paste0(round(중앙값_용적률, 1), "%"),
+      최대_용적률 = paste0(round(최대_용적률, 1), "%"),
+      평균_조합원수 = format(round(평균_조합원수), big.mark = ","),
+      중앙값_조합원수 = format(round(중앙값_조합원수), big.mark = ",")
+    )
+
+  kable(
+    similar_size_urban_recon_summary,
+    format = "html",
+    caption = "표 10. 유사 규모 특별계획구역 내 도시정비형 사업 요약",
+    align = "c"
+  ) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      font_size = 12
+    )
+
+  similar_size_urban_recon_in_special_zone %>%
+    transmute(
+      특별계획구역 = DGM_NM,
+      특별계획구역면적 = format(round(special_zone_area), big.mark = ","),
+      사업명 = asct_nm,
+      정비구역명 = mtnc_area_nm,
+      사업구분 = biz_se,
+      진행단계 = prgrs_seq,
+      상태 = stts,
+      대표지번 = full_address,
+      정비구역면적 = format(round(mtnc_area_num), big.mark = ","),
+      용적률 = ifelse(is.na(fart_num), "-", paste0(round(fart_num, 1), "%")),
+      조합원수 = ifelse(is.na(ownr_cnt_num), "-", format(round(ownr_cnt_num), big.mark = ","))
+    ) %>%
+    arrange(특별계획구역, 사업명) %>%
+    kable(
+      format = "html",
+      caption = "표 11. 유사 규모 특별계획구역 내 도시정비형 사업 사례",
+      align = "c"
+    ) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      font_size = 12
+    ) %>%
+    scroll_box(width = "100%")
+}
+
+# 좌표 미식별 주소 진단은 본문 흐름에서 제외한다.
+
+```
+
+
+```{r leflet_specialzone, eval=FALSE, include=FALSE}
+spq_sf <- st_transform(spq_sf, crs = 4326)
+
+
+###b leaflet에 적용
+leaflet(data = spq_sf) %>%
+  addTiles() %>%
+  addPolygons(color = "darkgreen", weight = 2, fillOpacity = 0.6,
+              popup = ~DGM_NM)
+
+
+```
+
+# 사례를 적용한 개발안
+
+해당사례를 적용하여 주거지는 서초진흥아파트 재개발사업을, 상업지는 상봉 10구역 재개발사업을 벤치마킹으로 선정하였다. 해당구역의 현재와 개발계획은 다음과 같다. 
+
+
+```{r benchmark_case_table, message=FALSE, results='asis'}
+benchmark_case_table <- tibble::tribble(
+  ~구역명, ~현재구성, ~개발후구성,
+  "서초진흥아파트",
+  "107㎡ 315가구<br>140㎡ 180가구<br>172㎡ 120가구",
+  "59㎡ 132가구<br>84㎡ 349가구<br>94㎡ 198가구<br>105㎡ 65가구<br>118㎡ 56가구<br>136㎡ 67가구<br>임대 100가구",
+  "상봉10구역",
+  "다세대·다가구 127가구",
+  "일반분양 382가구<br>임대 116가구"
+)
+
+kable(
+  benchmark_case_table,
+  format = "html",
+  escape = FALSE,
+  caption = "표 7. 특별계획구역 적용 개발안 벤치마킹 사례",
+  align = c("l", "l", "l")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  ) %>%
+  column_spec(1, bold = TRUE, width = "16em") %>%
+  column_spec(2, width = "24em") %>%
+  column_spec(3, width = "34em")
+```
+
+## 주거지역 개발안
+
+```{r residential_development_plan, message=FALSE, results='asis'}
+residential_plan_summary <- tibble::tribble(
+  ~항목, ~값,
+  "주거지역 대지면적", "43,795㎡",
+  "적용 용적률", "<b>367%</b>",
+  "용적률 산정 연면적", "<b>약 160,728㎡</b>",
+  "커뮤니티·부대복리시설", "지상부 용적률 산정 연면적에 포함",
+  "기존 세대수", "850세대",
+  "세대수 증가율", "+40%",
+  "개발 후 세대수", "<b>약 1,190세대</b>",
+  "최고층수", "35층",
+  "세대당 평균 공급면적", "약 135㎡"
+)
+
+kable(
+  residential_plan_summary,
+  format = "html",
+  escape = FALSE,
+  caption = "표 12. 주거지역 개발안 v4",
+  align = c("l", "r")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  ) %>%
+  column_spec(1, bold = TRUE, width = "18em") %>%
+  column_spec(2, width = "16em")
+
+residential_unit_plan <- tibble::tribble(
+  ~unit_type, ~exclusive_area_m2, ~units,
+  "일반", 59, 160,
+  "일반", 84, 430,
+  "일반", 94, 240,
+  "일반", 105, 80,
+  "일반", 118, 70,
+  "일반", 136, 80,
+  "임대/공공", 49, 130
+)
+
+residential_unit_mix <- residential_unit_plan %>%
+  transmute(
+    전용면적 = if_else(unit_type == "임대/공공", "임대/공공", paste0(exclusive_area_m2, "㎡")),
+    세대수 = units
+  ) %>%
+  bind_rows(tibble::tibble(전용면적 = "<b>합계</b>", 세대수 = sum(residential_unit_plan$units))) %>%
+  mutate(세대수 = ifelse(전용면적 == "<b>합계</b>", "<b>1,190</b>", format(세대수, big.mark = ",")))
+
+kable(
+  residential_unit_mix,
+  format = "html",
+  escape = FALSE,
+  caption = "표 13. 주거지역 전용면적 구성안",
+  align = c("l", "r")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  ) %>%
+  column_spec(1, width = "12em") %>%
+  column_spec(2, width = "10em")
+
+cat("
+이촌동 초입 주거지역은 서초진흥아파트 사례와 유사하게 용적률 약 367%, 최고 35층을 적용할 경우 약 16.1만㎡의 용적률 산정 연면적을 확보할 수 있다. 이 지상부 용적률 산정 연면적에는 주민공동시설, 관리사무소, 경로당, 어린이집 등 커뮤니티·부대복리시설을 포함하는 것으로 보았다. 기존 약 850세대에 40% 증가율을 적용하면 개발 후 약 1,190세대 규모가 가능하며, 세대당 평균 공급면적은 약 135㎡ 수준으로 산출된다. 다만 84㎡ 중심으로 구성해야 하며, 136㎡ 이상 대형 평형 비중을 과도하게 높이면 1,190세대 유지가 어려워진다.
+")
+```
+
+```{r fig-residential-zone, echo=FALSE, out.width="100%", fig.align="center", fig.cap="그림 5. 이촌동 초입구역 주거지역 개발안 구상도"}
+if (file.exists(img_residential_zone)) {
+  knitr::include_graphics(img_residential_zone)
+} else {
+  cat("**이미지 파일을 찾을 수 없습니다:** ", img_residential_zone)
+}
+```
+
+> 위 이미지는 확정 설계안이 아니라, 주거지역 개발안의 공간 범위와 배치 방향을 설명하기 위한 구상도이다. 세대수, 평형 구성, 용적률 등 수치 시나리오는 앞의 개발안 표와 별도로 검토되어야 한다.
+
+## 상업지역 오피스텔 개발안
+
+```{r commercial_development_plan, message=FALSE, results='asis'}
+commercial_area_m2 <- 10524
+commercial_far <- 4.5
+commercial_floor_area <- commercial_area_m2 * commercial_far
+commercial_life_support_far <- 0.35
+commercial_life_support_floor_area <- commercial_area_m2 * commercial_life_support_far
+commercial_officetel_floor_area <- commercial_floor_area - commercial_life_support_floor_area
+officetel_general_59_units <- 135
+officetel_general_84_units <- 130
+officetel_public_units <- 100
+officetel_total_units <- officetel_general_59_units + officetel_general_84_units + officetel_public_units
+
+commercial_previous_unit_mix <- tibble::tribble(
+  ~구분, ~전용면적, ~호실, ~전용면적합계,
+  "일반", "59㎡", 200, 11800,
+  "일반", "84㎡", 200, 16800,
+  "임대", "49㎡", 110, 5390,
+  "<b>합계</b>", "", 510, 33990
+) %>%
+  mutate(
+    호실 = ifelse(구분 == "<b>합계</b>", "<b>510</b>", format(호실, big.mark = ",")),
+    전용면적합계 = ifelse(구분 == "<b>합계</b>", "<b>33,990㎡</b>", paste0(format(전용면적합계, big.mark = ","), "㎡"))
+  )
+
+kable(
+  commercial_previous_unit_mix,
+  format = "html",
+  escape = FALSE,
+  caption = "표 14. 상업지역 기존 오피스텔 구성안 검토",
+  align = c("l", "r", "r", "r")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  )
+
+commercial_revised_unit_mix <- tibble::tribble(
+  ~구분, ~전용면적, ~호실, ~비고,
+  "일반 오피스텔", "59㎡", officetel_general_59_units, "비주거 권리자 배정 대상",
+  "일반 오피스텔", "84㎡", officetel_general_84_units, "비주거 권리자 배정 대상",
+  "임대 오피스텔", "49㎡", officetel_public_units, "분양수입 제외",
+  "근생·노유자", "-", NA_real_, paste0("용적률 35%p, 약 ", format(round(commercial_life_support_floor_area), big.mark = ","), "㎡"),
+  "오피스텔 커뮤니티", "-", NA_real_, "지상부 용적률 산정 연면적에 포함",
+  "<b>합계</b>", "", officetel_total_units, "오피스텔 실수 기준"
+) %>%
+  mutate(
+    호실 = case_when(
+      구분 == "<b>합계</b>" ~ paste0("<b>", format(officetel_total_units, big.mark = ","), "실</b>"),
+      is.na(호실) ~ "-",
+      TRUE ~ paste0(format(호실, big.mark = ","), "실")
+    )
+  )
+
+kable(
+  commercial_revised_unit_mix,
+  format = "html",
+  escape = FALSE,
+  caption = "표 15. 상업지역 450% 적용 오피스텔·근생·노유자 수정안",
+  align = c("l", "r", "r", "l")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  )
+
+cat(glue::glue("
+상업지역 대지면적 {format(commercial_area_m2, big.mark = ',')}㎡에 용적률 450%를 적용하면 용적률 산정 연면적은 약 {format(round(commercial_floor_area), big.mark = ',')}㎡이다. 이 중 기존 구역에 존재하던 근생·노유자 기능을 반영하기 위해 용적률 35%p, 약 {format(round(commercial_life_support_floor_area), big.mark = ',')}㎡를 생활지원시설 면적으로 별도 배정하였다. 이에 따라 오피스텔에 배정 가능한 용적률 산정 연면적은 약 {format(round(commercial_officetel_floor_area), big.mark = ',')}㎡이며, 오피스텔 전용률 55%를 적용하면 일반 오피스텔 {format(officetel_general_59_units + officetel_general_84_units, big.mark = ',')}실과 임대 오피스텔 {format(officetel_public_units, big.mark = ',')}실, 총 {format(officetel_total_units, big.mark = ',')}실 규모가 현실적인 안이다.
+
+오피스텔 커뮤니티 시설은 지상부에 설치되는 라운지, 피트니스, 공유업무공간 등으로 보고 오피스텔 용적률 산정 연면적 안에 포함하였다. 지하주차장, 기계·전기실 등 지하 지원시설은 용적률 산정 연면적에서는 제외하되 공사비 산정 연면적에는 포함하였다.
+"))
+```
+
+```{r fig-commercial-zone, echo=FALSE, out.width="100%", fig.align="center", fig.cap="그림 6. 이촌동 초입구역 상업지역 개발안 구상도"}
+if (file.exists(img_commercial_zone)) {
+  knitr::include_graphics(img_commercial_zone)
+} else {
+  cat("**이미지 파일을 찾을 수 없습니다:** ", img_commercial_zone)
+}
+```
+
+> 위 이미지는 확정 설계안이 아니라, 상업지역 내 오피스텔, 근생·노유자, 비주거 권리자 배정 및 일반분양 가능 영역을 설명하기 위한 구상도이다. 실제 시설 배치와 보행·교통 계획은 별도 설계 및 인허가 검토가 필요하다.
+
+## 권리가액 추정
+
+```{r right_value_estimation, message=FALSE, results='asis'}
+residential_right_land_area_m2 <- 43795
+
+zone_area_for_rights <- if (exists("sf_all")) {
+  sf_all %>%
+    st_drop_geometry() %>%
+    group_by(block, zone) %>%
+    summarise(area_m2 = sum(area_m2, na.rm = TRUE), .groups = "drop")
+} else {
+  tibble::tribble(
+    ~block, ~zone, ~area_m2,
+    "COMMERCIAL", "업무+근생", 10524,
+    "KEEP_1", "존치", NA_real_,
+    "KEEP_2", "존치", NA_real_
+  )
+}
+
+nonres_development_land_area_m2 <- zone_area_for_rights %>%
+  filter(block == "COMMERCIAL") %>%
+  summarise(area_m2 = sum(area_m2, na.rm = TRUE)) %>%
+  pull(area_m2)
+
+if (length(nonres_development_land_area_m2) == 0 || is.na(nonres_development_land_area_m2)) {
+  nonres_development_land_area_m2 <- 10524
+}
+
+preserved_land_area_m2 <- zone_area_for_rights %>%
+  filter(stringr::str_detect(block, "^KEEP")) %>%
+  summarise(area_m2 = sum(area_m2, na.rm = TRUE)) %>%
+  pull(area_m2)
+
+if (length(preserved_land_area_m2) == 0 || is.na(preserved_land_area_m2)) {
+  preserved_land_area_m2 <- 0
+}
+
+mixed_budae_land_area <- comm_summary %>%
+  filter(bldg_nm == "부대찌개건물") %>%
+  summarise(land_area = sum(land_area, na.rm = TRUE), .groups = "drop") %>%
+  pull(land_area)
+
+if (length(mixed_budae_land_area) == 0 || is.na(mixed_budae_land_area)) {
+  mixed_budae_land_area <- 0
+}
+
+budae_residential_households <- 5
+budae_commercial_units <- 6
+budae_total_units <- budae_residential_households + budae_commercial_units
+budae_residential_land_area <- mixed_budae_land_area * budae_residential_households / budae_total_units
+budae_commercial_land_area <- mixed_budae_land_area * budae_commercial_units / budae_total_units
+masan_min_land_area <- 20
+
+residential_right_base <- apt_summary %>%
+  filter(!stringr::str_detect(bldg_nm, "^합계")) %>%
+  select(bldg_nm, hh, land_area) %>%
+  left_join(asking_price_by_bldg, by = "bldg_nm") %>%
+  mutate(
+    asking_price_95 = asking_price * 0.95,
+    right_value = asking_price_95 * hh,
+    right_value_uk = right_value / 10000
+  )
+
+residential_total_right_value_base <- sum(residential_right_base$right_value, na.rm = TRUE)
+residential_right_value_per_m2_base <- residential_total_right_value_base / residential_right_land_area_m2
+
+mixed_residential_right_by_bldg <- tibble::tibble(
+  bldg_nm = "부대찌개건물(주거)",
+  hh = budae_residential_households,
+  land_area = budae_residential_land_area,
+  asking_price = NA_real_,
+  asking_area_m2 = NA_real_,
+  asking_price_per_pyeong = NA_real_,
+  asking_source_date = "토지지분 안분",
+  asking_source = "부대찌개건물 주거 5 / 근생 6 안분",
+  asking_n = NA_integer_,
+  asking_price_95 = if_else(
+    budae_residential_land_area > 0,
+    budae_residential_land_area * residential_right_value_per_m2_base / budae_residential_households,
+    NA_real_
+  ),
+  right_value = asking_price_95 * hh,
+  right_value_uk = right_value / 10000
+)
+
+residential_right_by_bldg <- residential_right_base %>%
+  bind_rows(mixed_residential_right_by_bldg) %>%
+  arrange(desc(right_value_uk))
+
+residential_total_right_value <- sum(residential_right_by_bldg$right_value, na.rm = TRUE)
+residential_right_value_per_m2 <- residential_total_right_value / residential_right_land_area_m2
+nonres_land_value_multiplier <- 1.6
+road_purchase_area_m2 <- 8800
+road_purchase_discount <- 0.9
+road_public_price_per_m2 <- 300
+
+nonres_right_value_per_m2 <- residential_right_value_per_m2 * nonres_land_value_multiplier
+nonres_total_right_value <- nonres_right_value_per_m2 * nonres_development_land_area_m2
+road_purchase_value <- residential_right_value_per_m2 * road_purchase_discount * road_purchase_area_m2
+
+right_value_summary <- tibble::tribble(
+  ~항목, ~값,
+  "주거 권리가액 기준", "최근 확인 호가 × 95%",
+  "주거지역 권리가액 합계", paste0(format(round(residential_total_right_value / 10000), big.mark = ","), "억"),
+  "주거지역 대지면적", paste0(format(residential_right_land_area_m2, big.mark = ","), "㎡"),
+  "주거지역 ㎡당 권리가액", paste0(format(round(residential_right_value_per_m2), big.mark = ","), "만원/㎡"),
+  "비주거지역 ㎡당 권리가액", paste0(format(round(nonres_right_value_per_m2), big.mark = ","), "만원/㎡ (주거 1.6배)"),
+  "비주거 개발대상 대지면적", paste0(format(round(nonres_development_land_area_m2), big.mark = ","), "㎡"),
+  "존치면적", paste0(format(round(preserved_land_area_m2), big.mark = ","), "㎡"),
+  "비주거지역 추정 권리가액", paste0(format(round(nonres_total_right_value / 10000), big.mark = ","), "억"),
+  "도로 매입비(사업비)", paste0(format(round(road_purchase_value / 10000), big.mark = ","), "억 (주거 ㎡당 권리가액의 90%)"),
+  "도로 공시지가 참고", paste0(format(road_public_price_per_m2, big.mark = ","), "만원/㎡ 수준")
+)
+
+kable(
+  right_value_summary,
+  format = "html",
+  caption = "표 16. 95% 호가기준 권리가액 산정 요약",
+  align = c("l", "r")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  ) %>%
+  column_spec(1, bold = TRUE, width = "20em") %>%
+  column_spec(2, width = "18em")
+
+residential_right_by_bldg %>%
+  transmute(
+    단지명 = bldg_nm,
+    세대수 = format(hh, big.mark = ","),
+    `95% 적용 호가` = paste0(format(round(asking_price_95 / 10000, 1), big.mark = ","), "억"),
+    `권리가액` = paste0(format(round(right_value_uk), big.mark = ","), "억")
+  ) %>%
+  kable(
+    format = "html",
+    caption = "표 17. 주거 단지별 호가기준 권리가액",
+    align = c("l", "r", "r", "r")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 12
+  ) %>%
+  scroll_box(width = "100%")
+
+nonres_excluded_bldg_pattern <- "의사협회|충신교회|도로|공원|주차장"
+
+nonres_right_source <- comm_summary %>%
+  filter(!stringr::str_detect(bldg_nm, "^합계")) %>%
+  mutate(
+    land_area = case_when(
+      bldg_nm == "부대찌개건물" ~ budae_commercial_land_area,
+      bldg_nm == "마산아구찜" & (is.na(land_area) | land_area <= 0) ~ masan_min_land_area,
+      TRUE ~ land_area
+    )
+  )
+
+nonres_right_by_bldg <- nonres_right_source %>%
+  mutate(
+    is_excluded_from_nonres_right = stringr::str_detect(bldg_nm, nonres_excluded_bldg_pattern)
+  ) %>%
+  filter(!is_excluded_from_nonres_right) %>%
+  mutate(
+    land_share = land_area / sum(land_area, na.rm = TRUE),
+    allocated_land_area = land_share * nonres_development_land_area_m2,
+    right_value = allocated_land_area * nonres_right_value_per_m2,
+    right_value_uk = right_value / 10000
+  ) %>%
+  arrange(desc(right_value_uk))
+
+nonres_right_by_bldg %>%
+  transmute(
+    건물명 = bldg_nm,
+    `현재 대지면적` = paste0(format(round(land_area), big.mark = ","), "㎡"),
+    `개발대상 환산면적` = paste0(format(round(allocated_land_area), big.mark = ","), "㎡"),
+    `면적비중` = paste0(round(land_share * 100, 1), "%"),
+    `권리가액` = paste0(format(round(right_value_uk), big.mark = ","), "억")
+  ) %>%
+  kable(
+    format = "html",
+    caption = "표 18. 비주거지역 대지면적 비례 권리가액 배분",
+    align = c("l", "r", "r", "r", "r")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 12
+  ) %>%
+  scroll_box(width = "100%")
+
+cat(glue::glue("
+주거지역 권리가액은 최근 확인 호가에 95%를 적용한 뒤 단지별 세대수를 곱해 산정하였다. 부대찌개건물은 주거 5, 근생 6의 혼합건물로 보아 대지면적을 가구·호수 기준 5:6으로 안분하였고, 주거분은 주거지역 ㎡당 권리가액 기준으로 별도 반영하였다. 이를 주거지역 대지면적 {format(residential_right_land_area_m2, big.mark = ',')}㎡로 나누면 ㎡당 권리가액은 약 {format(round(residential_right_value_per_m2), big.mark = ',')}만원/㎡이다. 비주거지역은 상업용지가 통상 주거용지보다 높게 평가된다는 점을 반영하되 과도한 평가를 피하기 위해 주거지역 ㎡당 권리가액의 1.6배를 적용하였다. 부대찌개건물 근생분은 나머지 6/11 대지지분으로 반영하고, 마산아구찜은 최저 지분 20㎡를 가정하였다. 존치부지와 도로·공원·주차장은 비주거 권리가액 배분 대상에서 제외하고, 비주거 개발대상 대지면적 {format(round(nonres_development_land_area_m2), big.mark = ',')}㎡를 나머지 비주거 건물의 현재 대지면적 비중으로 배분하였다. 도로는 별도 매입 대상으로 보고 약 {format(road_purchase_area_m2, big.mark = ',')}㎡에 대해 주거지역 ㎡당 권리가액의 90%를 적용하였으며, 공시지가는 ㎡당 약 {format(road_public_price_per_m2, big.mark = ',')}만원 수준으로 참고하였다.
+"))
+```
+
+## 분양수입 추정
+
+```{r sales_revenue_estimation, message=FALSE, results='asis'}
+ichon_leel_nonmember_price <- 7200
+location_redevelopment_multiplier <- 1.2
+construction_cost_growth_rate <- 0.03
+presale_years <- 5
+member_price_ratio <- 0.75
+
+apt_sale_price <- round(
+  ichon_leel_nonmember_price *
+    location_redevelopment_multiplier *
+    (1 + construction_cost_growth_rate)^presale_years
+)
+apt_member_price <- round(apt_sale_price * member_price_ratio)
+apt_market_price <- 15000
+
+brighton_yeouido_officetel_price <- 10000
+officetel_sale_price <- round(
+  brighton_yeouido_officetel_price *
+    (1 + construction_cost_growth_rate)^presale_years
+)
+officetel_member_price <- round(officetel_sale_price * member_price_ratio)
+
+m2_per_pyeong <- 3.3058
+residential_far_area_m2 <- 160728
+apt_exclusive_ratio <- 0.75
+officetel_exclusive_ratio <- 0.55
+
+price_assumption_table <- tibble::tribble(
+  ~구분, ~`평당 가격`, ~산정근거,
+  "이촌르엘 비조합원 분양가", paste0(format(ichon_leel_nonmember_price, big.mark = ","), "만원"), "인근 리모델링 단지 분양가",
+  "입지·재건축 보정", paste0(location_redevelopment_multiplier, "배"), "위치 및 재건축 물건 프리미엄",
+  "5년 후 분양가 상승 보정", paste0(round(((1 + construction_cost_growth_rate)^presale_years - 1) * 100, 1), "%"), "표준건축비 상승률 3% 연복리",
+  "아파트 일반분양가", paste0("<b>", format(apt_sale_price, big.mark = ","), "만원</b>"), "7,200만원 × 1.2 × 1.03^5",
+  "아파트 조합원 분양가", paste0(format(apt_member_price, big.mark = ","), "만원"), "일반분양가의 75%",
+  "브라이튼 여의도 오피스텔 기준가", paste0(format(brighton_yeouido_officetel_price, big.mark = ","), "만원"), "고급 복합개발 오피스텔 사례",
+  "오피스텔 일반분양가", paste0(format(officetel_sale_price, big.mark = ","), "만원"), "1억원 × 1.03^5",
+  "오피스텔 조합원 분양가", paste0(format(officetel_member_price, big.mark = ","), "만원"), "오피스텔 일반분양가의 75%",
+  "배정 후 아파트 시가", paste0(format(apt_market_price, big.mark = ","), "만원"), "신축 입주 후 시장가정"
+)
+
+kable(
+  price_assumption_table,
+  format = "html",
+  escape = FALSE,
+  caption = "표 19. 조합원 및 일반분양 가격 가정",
+  align = c("l", "r", "l")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  )
+
+apt_member_allocation_raw <- current_price_match_raw %>%
+  select(bldg_nm, comp_complex, comp_recent_area) %>%
+  left_join(
+    apt_summary %>%
+      filter(!stringr::str_detect(bldg_nm, "^합계")) %>%
+      select(bldg_nm, hh),
+    by = "bldg_nm"
+  ) %>%
+  left_join(
+    residential_right_by_bldg %>%
+      select(bldg_nm, right_value_uk),
+    by = "bldg_nm"
+  )
+
+mixed_residential_allocation_raw <- residential_right_by_bldg %>%
+  filter(bldg_nm == "부대찌개건물(주거)") %>%
+  transmute(
+    bldg_nm,
+    comp_complex = "최소배정",
+    comp_recent_area = 59,
+    hh,
+    right_value_uk
+  )
+
+apt_member_allocation_raw <- apt_member_allocation_raw %>%
+  bind_rows(mixed_residential_allocation_raw)
+
+apt_member_households <- sum(apt_member_allocation_raw$hh, na.rm = TRUE)
+apt_existing_households <- 850
+apt_member_area_scale <- ifelse(apt_member_households > 0, apt_existing_households / apt_member_households, 1)
+
+apt_household_demand_base <- apt_member_allocation_raw %>%
+  mutate(
+    scaled_hh_raw = hh * apt_member_area_scale,
+    scaled_hh_floor = floor(scaled_hh_raw),
+    scaled_hh_remainder = scaled_hh_raw - scaled_hh_floor,
+    current_right_per_hh_uk = right_value_uk / hh
+  ) %>%
+  arrange(desc(scaled_hh_remainder), desc(current_right_per_hh_uk)) %>%
+  mutate(
+    scaled_hh = scaled_hh_floor +
+      if_else(row_number() <= apt_existing_households - sum(scaled_hh_floor, na.rm = TRUE), 1, 0)
+  )
+
+apt_member_demand <- apt_household_demand_base %>%
+  filter(scaled_hh > 0) %>%
+  tidyr::uncount(scaled_hh, .id = "member_seq") %>%
+  mutate(
+    desired_area = vapply(
+      comp_recent_area,
+      function(x) {
+        areas <- residential_unit_plan$exclusive_area_m2[residential_unit_plan$unit_type == "일반"]
+        areas[which.min(abs(areas - x))]
+      },
+      numeric(1)
+    )
+  ) %>%
+  arrange(desc(current_right_per_hh_uk), desc(desired_area), bldg_nm, member_seq) %>%
+  mutate(member_id = row_number())
+
+apt_unit_inventory <- residential_unit_plan %>%
+  filter(unit_type == "일반") %>%
+  arrange(exclusive_area_m2) %>%
+  select(exclusive_area_m2, units)
+
+assign_apt_units <- function(demand, inventory) {
+  remaining <- stats::setNames(inventory$units, as.character(inventory$exclusive_area_m2))
+  demand$assigned_area <- NA_real_
+
+  for (area in sort(unique(demand$desired_area))) {
+    idx <- which(demand$desired_area == area)
+    if (length(idx) == 0) next
+
+    idx <- idx[order(-demand$current_right_per_hh_uk[idx])]
+    keep_n <- min(length(idx), remaining[as.character(area)])
+    if (keep_n > 0) {
+      keep_idx <- tail(idx, keep_n)
+      demand$assigned_area[keep_idx] <- area
+      remaining[as.character(area)] <- remaining[as.character(area)] - keep_n
+    }
+
+    upgrade_idx <- idx[is.na(demand$assigned_area[idx])]
+    if (length(upgrade_idx) == 0) next
+
+    upgrade_idx <- upgrade_idx[order(-demand$current_right_per_hh_uk[upgrade_idx])]
+    for (i in upgrade_idx) {
+      available_areas <- as.numeric(names(remaining)[remaining > 0])
+      if (length(available_areas) == 0) break
+      larger_areas <- available_areas[available_areas > area]
+      if (length(larger_areas) > 0) {
+        chosen_area <- min(larger_areas)
+      } else {
+        chosen_area <- available_areas[which.min(abs(available_areas - area))]
+      }
+      demand$assigned_area[i] <- chosen_area
+      remaining[as.character(chosen_area)] <- remaining[as.character(chosen_area)] - 1
+    }
+  }
+
+  unassigned_idx <- which(is.na(demand$assigned_area))
+  if (length(unassigned_idx) > 0) {
+    for (i in unassigned_idx) {
+      available_areas <- as.numeric(names(remaining)[remaining > 0])
+      if (length(available_areas) == 0) break
+      chosen_area <- available_areas[which.min(abs(available_areas - demand$desired_area[i]))]
+      demand$assigned_area[i] <- chosen_area
+      remaining[as.character(chosen_area)] <- remaining[as.character(chosen_area)] - 1
+    }
+  }
+
+  demand
+}
+
+apt_member_assigned_units <- assign_apt_units(apt_member_demand, apt_unit_inventory)
+
+apt_member_allocation <- apt_member_assigned_units %>%
+  group_by(bldg_nm, comp_complex, comp_recent_area) %>%
+  summarise(
+    scaled_hh = n(),
+    avg_assigned_exclusive_area_m2 = mean(assigned_area, na.rm = TRUE),
+    member_exclusive_area_m2 = sum(assigned_area, na.rm = TRUE),
+    assigned_unit_mix = paste0(
+      names(table(assigned_area)),
+      "㎡ ",
+      as.integer(table(assigned_area)),
+      "세대",
+      collapse = " / "
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    scaled_member_supply_area_m2 = member_exclusive_area_m2 / apt_exclusive_ratio,
+    member_supply_area_py = scaled_member_supply_area_m2 / m2_per_pyeong,
+    member_sale_revenue_uk = member_supply_area_py * apt_member_price / 10000,
+    member_market_value_uk = member_supply_area_py * apt_market_price / 10000
+  )
+
+apt_total_supply_area_m2 <- residential_far_area_m2
+apt_member_supply_area_m2 <- sum(apt_member_allocation$scaled_member_supply_area_m2, na.rm = TRUE)
+apt_public_exclusive_area_m2 <- 49 * 130
+apt_public_supply_area_m2 <- apt_public_exclusive_area_m2 / apt_exclusive_ratio
+apt_general_supply_area_m2 <- pmax(apt_total_supply_area_m2 - apt_member_supply_area_m2 - apt_public_supply_area_m2, 0)
+
+apt_member_revenue_uk <- sum(apt_member_allocation$member_sale_revenue_uk, na.rm = TRUE)
+apt_member_market_value_uk <- sum(apt_member_allocation$member_market_value_uk, na.rm = TRUE)
+apt_general_sale_revenue_uk <- apt_general_supply_area_m2 / m2_per_pyeong * apt_sale_price / 10000
+
+officetel_general_exclusive_area_m2 <- 59 * officetel_general_59_units + 84 * officetel_general_84_units
+officetel_public_exclusive_area_m2 <- 49 * officetel_public_units
+officetel_general_supply_area_m2 <- officetel_general_exclusive_area_m2 / officetel_exclusive_ratio
+officetel_public_supply_area_m2 <- officetel_public_exclusive_area_m2 / officetel_exclusive_ratio
+nonres_member_min_far <- 2.0
+officetel_member_total_supply_area_m2 <- min(
+  nonres_development_land_area_m2 * nonres_member_min_far,
+  officetel_general_supply_area_m2
+)
+officetel_member_allocation_ratio <- officetel_member_total_supply_area_m2 / officetel_general_supply_area_m2
+officetel_member_allocation <- nonres_right_by_bldg %>%
+  mutate(
+    right_share = right_value_uk / sum(right_value_uk, na.rm = TRUE),
+    land_share_for_member = allocated_land_area / sum(allocated_land_area, na.rm = TRUE),
+    member_supply_area_m2 = allocated_land_area * nonres_member_min_far,
+    member_supply_area_py = member_supply_area_m2 / m2_per_pyeong,
+    member_sale_revenue_uk = member_supply_area_py * officetel_member_price / 10000,
+    member_market_value_uk = member_supply_area_py * officetel_sale_price / 10000
+  )
+
+officetel_member_supply_area_m2 <- sum(officetel_member_allocation$member_supply_area_m2, na.rm = TRUE)
+officetel_external_supply_area_m2 <- pmax(officetel_general_supply_area_m2 - officetel_member_supply_area_m2, 0)
+officetel_member_revenue_uk <- sum(officetel_member_allocation$member_sale_revenue_uk, na.rm = TRUE)
+officetel_member_market_value_uk <- sum(officetel_member_allocation$member_market_value_uk, na.rm = TRUE)
+officetel_general_sale_revenue_uk <- officetel_external_supply_area_m2 / m2_per_pyeong * officetel_sale_price / 10000
+
+external_sales_revenue_uk <- apt_general_sale_revenue_uk + officetel_general_sale_revenue_uk
+total_sales_revenue_uk <- apt_member_revenue_uk + officetel_member_revenue_uk + external_sales_revenue_uk
+
+apt_member_allocation %>%
+  transmute(
+    단지명 = bldg_nm,
+    `표 6 기준` = paste0(comp_complex, " ", round(comp_recent_area, 1), "㎡"),
+    `실제 배정평형` = assigned_unit_mix,
+    `환산 세대수` = format(round(scaled_hh), big.mark = ","),
+    `평균 배정 전용면적` = paste0(round(avg_assigned_exclusive_area_m2, 1), "㎡"),
+    `조합원 배정 공급면적` = paste0(format(round(member_supply_area_py), big.mark = ","), "평"),
+    `조합원 분양수입` = paste0(format(round(member_sale_revenue_uk), big.mark = ","), "억"),
+    `배정 후 시가` = paste0(format(round(member_market_value_uk), big.mark = ","), "억")
+  ) %>%
+  kable(
+    format = "html",
+    caption = "표 20. 계획 평형 재고 기준 아파트 조합원 배정 시나리오",
+    align = c("l", "l", "l", "r", "r", "r", "r", "r")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 12
+  ) %>%
+  scroll_box(width = "100%")
+
+officetel_member_allocation %>%
+  transmute(
+    건물명 = bldg_nm,
+    `현재 권리가액` = paste0(format(round(right_value_uk), big.mark = ","), "억"),
+    `개발대상 환산면적` = paste0(format(round(allocated_land_area), big.mark = ","), "㎡"),
+    `조합원 배정 기준` = paste0(round(nonres_member_min_far * 100), "%"),
+    `전체 오피스텔 중 배정비중` = paste0(round(member_supply_area_m2 / officetel_general_supply_area_m2 * 100, 1), "%"),
+    `오피스텔 배정 공급면적` = paste0(format(round(member_supply_area_py), big.mark = ","), "평"),
+    `조합원 분양수입` = paste0(format(round(member_sale_revenue_uk), big.mark = ","), "억"),
+    `배정 후 시가` = paste0(format(round(member_market_value_uk), big.mark = ","), "억")
+  ) %>%
+  kable(
+    format = "html",
+    caption = "표 21. 비주거 권리자 오피스텔 배정 시나리오",
+    align = c("l", "r", "r", "r", "r", "r", "r", "r")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 12
+  ) %>%
+  scroll_box(width = "100%")
+
+sales_revenue_table <- tibble::tribble(
+  ~구분, ~면적, ~단가, ~수입,
+  "아파트 조합원 배정분", paste0(format(round(apt_member_supply_area_m2 / m2_per_pyeong), big.mark = ","), "평"), paste0(format(apt_member_price, big.mark = ","), "만원/평"), paste0(format(round(apt_member_revenue_uk), big.mark = ","), "억"),
+  "아파트 일반분양분", paste0(format(round(apt_general_supply_area_m2 / m2_per_pyeong), big.mark = ","), "평"), paste0(format(apt_sale_price, big.mark = ","), "만원/평"), paste0(format(round(apt_general_sale_revenue_uk), big.mark = ","), "억"),
+  "오피스텔 비주거 권리자 배정분", paste0(format(round(officetel_member_supply_area_m2 / m2_per_pyeong), big.mark = ","), "평"), paste0(format(officetel_member_price, big.mark = ","), "만원/평"), paste0(format(round(officetel_member_revenue_uk), big.mark = ","), "억"),
+  "오피스텔 일반분양분", paste0(format(round(officetel_external_supply_area_m2 / m2_per_pyeong), big.mark = ","), "평"), paste0(format(officetel_sale_price, big.mark = ","), "만원/평"), paste0(format(round(officetel_general_sale_revenue_uk), big.mark = ","), "억"),
+  "근생·노유자", paste0(format(round(commercial_life_support_floor_area / m2_per_pyeong), big.mark = ","), "평"), "분양수입 제외", "-",
+  "임대/공공 및 임대 오피스텔", paste0(format(round((apt_public_supply_area_m2 + officetel_public_supply_area_m2) / m2_per_pyeong), big.mark = ","), "평"), "분양수입 제외", "-",
+  "<b>외부 일반분양 현금유입</b>", "", "", paste0("<b>", format(round(external_sales_revenue_uk), big.mark = ","), "억</b>"),
+  "<b>총 분양수입</b>", "", "", paste0("<b>", format(round(total_sales_revenue_uk), big.mark = ","), "억</b>")
+)
+
+kable(
+  sales_revenue_table,
+  format = "html",
+  escape = FALSE,
+  caption = "표 22. 조합원·일반분양 구분 분양수입 추정",
+  align = c("l", "r", "r", "r")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  )
+
+cat(glue::glue("
+아파트 일반분양가는 이촌르엘 비조합원 분양가 7,200만원/평을 기준으로 위치 및 재건축 물건 프리미엄 1.2배를 적용하고, 향후 5년 후 분양을 가정하여 표준건축비 상승률 3%를 연복리로 누적하였다. 이에 따라 아파트 일반분양가는 약 {format(apt_sale_price, big.mark = ',')}만원/평, 조합원 분양가는 일반분양가의 75%인 약 {format(apt_member_price, big.mark = ',')}만원/평으로 보았다.
+
+아파트 조합원 배정분은 표 6의 현재 비교대상 면적을 직접 곱하지 않고, 표 13의 실제 계획 평형 재고 안에서 배정하였다. 먼저 표 6의 비교단지 전용면적과 가장 가까운 계획 평형을 기본 배정평형으로 잡고, 특정 평형의 배정 수요가 계획 세대수를 초과하면 해당 평형을 원하는 세대 중 세대당 권리가액이 높은 순서로 상위 평형 재고에 배정하였다. 전체 기존 세대수는 개발안의 850세대에 맞추어 보정하였고, 배정된 전용면적은 아파트 전용률 75%를 적용하여 공급면적으로 환산하였다. 비주거지역은 기존 상업·업무시설의 영업 및 자산 성격을 고려하여 개발대상 환산 대지면적의 최소 200%에 해당하는 오피스텔 공급면적을 조합원 분양가 배정분으로 보았다. 이 기준에 따라 일반 오피스텔 공급면적 중 약 {round(officetel_member_allocation_ratio * 100, 1)}%가 비주거 권리자 배정분이 되고, 나머지는 일반분양분으로 남는다. 브라이튼 여의도 오피스텔 사례의 평당 1억원을 기준으로 향후 5년간 표준건축비 상승률 3%를 누적하여 오피스텔 일반분양가를 평당 {format(officetel_sale_price, big.mark = ',')}만원으로 보고, 오피스텔 조합원 분양가는 일반분양가의 75%인 평당 {format(officetel_member_price, big.mark = ',')}만원으로 보았다. 근생·노유자 면적은 기존 생활지원 기능을 대체하는 시설로 보고 분양수입에서는 제외하되, 용적률 산정 연면적과 공사비에는 포함하였다. 임대/공공 주택과 임대 오피스텔은 실제 건축비에는 포함하되, 본 분양수입 산정에서는 보수적으로 제외하였다.
+"))
+```
+
+## 사업비 추정
+
+```{r project_cost_estimation, message=FALSE, results='asis'}
+residential_far_area_m2 <- 160728
+commercial_far_area_m2 <- commercial_floor_area
+above_ground_far_area_m2 <- residential_far_area_m2 + commercial_far_area_m2
+
+underground_ratio <- 0.60
+underground_area_m2 <- above_ground_far_area_m2 * underground_ratio
+total_construction_area_m2 <- above_ground_far_area_m2 + underground_area_m2
+
+m2_per_pyeong <- 3.3058
+above_ground_area_py <- above_ground_far_area_m2 / m2_per_pyeong
+underground_area_py <- underground_area_m2 / m2_per_pyeong
+total_construction_area_py <- total_construction_area_m2 / m2_per_pyeong
+
+above_ground_unit_cost_per_py_uk <- 0.10
+underground_unit_cost_per_py_uk <- 0.06
+above_ground_construction_cost_uk <- above_ground_area_py * above_ground_unit_cost_per_py_uk
+underground_construction_cost_uk <- underground_area_py * underground_unit_cost_per_py_uk
+construction_cost_uk <- above_ground_construction_cost_uk + underground_construction_cost_uk
+other_project_cost_uk <- 2000
+development_cost_uk <- construction_cost_uk + other_project_cost_uk
+
+road_purchase_value_uk <- road_purchase_value / 10000
+total_right_value_uk <- residential_total_right_value / 10000 + nonres_total_right_value / 10000
+total_development_cost_with_road_uk <- development_cost_uk + road_purchase_value_uk
+total_project_cost_uk <- total_right_value_uk + total_development_cost_with_road_uk
+estimated_sales_revenue_uk <- if (exists("total_sales_revenue_uk")) total_sales_revenue_uk else 41600
+estimated_project_margin_uk <- estimated_sales_revenue_uk - total_project_cost_uk
+
+cost_area_table <- tibble::tribble(
+  ~구분, ~면적, ~비고,
+  "주거지역 용적률 산정 연면적", paste0(format(round(residential_far_area_m2), big.mark = ","), "㎡"), "임대/공공 세대, 커뮤니티·부대복리시설 포함",
+  "상업지역 용적률 산정 연면적", paste0(format(round(commercial_far_area_m2), big.mark = ","), "㎡"), "오피스텔, 임대 오피스텔, 근생·노유자, 지상 커뮤니티 포함",
+  "상업지역 중 근생·노유자", paste0(format(round(commercial_life_support_floor_area), big.mark = ","), "㎡"), "상업지역 용적률 35%p",
+  "지상 용적률 산정 연면적 합계", paste0(format(round(above_ground_far_area_m2), big.mark = ","), "㎡"), "공사비 산정의 지상부 기준",
+  "지하 연면적 가정", paste0(format(round(underground_area_m2), big.mark = ","), "㎡"), "지상부의 60%",
+  "총 공사비 기준 연면적", paste0(format(round(total_construction_area_m2), big.mark = ","), "㎡"), paste0("약 ", format(round(total_construction_area_py), big.mark = ","), "평")
+)
+
+kable(
+  cost_area_table,
+  format = "html",
+  caption = "표 23. 용적률 산정 연면적과 공사비 기준 연면적 구분",
+  align = c("l", "r", "l")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  )
+
+construction_cost_table <- tibble::tribble(
+  ~구분, ~면적, ~평당단가, ~공사비,
+  "지상부", paste0(format(round(above_ground_area_py), big.mark = ","), "평"), "1,000만원/평", paste0(format(round(above_ground_construction_cost_uk), big.mark = ","), "억"),
+  "지하부", paste0(format(round(underground_area_py), big.mark = ","), "평"), "600만원/평", paste0(format(round(underground_construction_cost_uk), big.mark = ","), "억"),
+  "<b>합계</b>", paste0("<b>", format(round(total_construction_area_py), big.mark = ","), "평</b>"), "", paste0("<b>", format(round(construction_cost_uk), big.mark = ","), "억</b>")
+)
+
+kable(
+  construction_cost_table,
+  format = "html",
+  escape = FALSE,
+  caption = "표 24. 총 연면적 기준 공사비 추정",
+  align = c("l", "r", "r", "r")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  )
+
+project_cost_table <- tibble::tribble(
+  ~구분, ~금액,
+  "주거 권리가액", paste0(format(round(residential_total_right_value / 10000), big.mark = ","), "억"),
+  "비주거 권리가액", paste0(format(round(nonres_total_right_value / 10000), big.mark = ","), "억"),
+  "권리가액 합계", paste0(format(round(total_right_value_uk), big.mark = ","), "억"),
+  "공사비", paste0(format(round(construction_cost_uk), big.mark = ","), "억"),
+  "기타 사업비", paste0(format(round(other_project_cost_uk), big.mark = ","), "억"),
+  "도로 매입비", paste0(format(round(road_purchase_value_uk), big.mark = ","), "억"),
+  "총 개발비", paste0(format(round(total_development_cost_with_road_uk), big.mark = ","), "억"),
+  "<b>총사업비</b>", paste0("<b>", format(round(total_project_cost_uk), big.mark = ","), "억</b>"),
+  "추정 분양수입", paste0(format(round(estimated_sales_revenue_uk), big.mark = ","), "억"),
+  "추정 사업차익", paste0(format(round(estimated_project_margin_uk), big.mark = ","), "억")
+)
+
+kable(
+  project_cost_table,
+  format = "html",
+  escape = FALSE,
+  caption = "표 25. 권리가액 포함 총사업비 및 사업차익 추정",
+  align = c("l", "r")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  ) %>%
+  column_spec(1, bold = TRUE, width = "18em") %>%
+  column_spec(2, width = "16em")
+
+cat(glue::glue("
+용적률 산정 연면적은 지상부 면적을 의미하므로 지하주차장, 기계실 등은 제외된다. 반면 실제 공사비는 지상부와 지하부를 합산한 총 연면적 기준으로 산정해야 한다. 본 검토에서는 지상부에 설치되는 아파트 커뮤니티·부대복리시설과 오피스텔 커뮤니티 시설을 용적률 산정 연면적에 포함하고, 지하주차장·기계실·전기실 등 지하 지원시설은 용적률 산정 연면적에서는 제외하되 공사비 산정 면적에는 포함하였다. 주거지역과 상업지역의 용적률 산정 연면적 합계 {format(round(above_ground_far_area_m2), big.mark = ',')}㎡에 지하부 60%를 추가하여 총 공사비 기준 연면적을 약 {format(round(total_construction_area_m2), big.mark = ',')}㎡, 약 {format(round(total_construction_area_py), big.mark = ',')}평으로 보았다. 임대/공공 세대와 임대 오피스텔도 실제로 건축되는 면적이므로 공사비 산정 면적에 포함하였다.
+
+이 기준에서 공사비는 약 {format(round(construction_cost_uk), big.mark = ',')}억 원, 기타 사업비는 약 {format(round(other_project_cost_uk), big.mark = ',')}억 원으로 산정된다. 도로 매입비는 기존 권리자의 권리가액이 아니라 조합이 추가로 취득해야 하는 사업비 항목으로 별도 반영하였다. 이를 반영한 총사업비는 약 {format(round(total_project_cost_uk), big.mark = ',')}억 원이며, 추정 분양수입 {format(round(estimated_sales_revenue_uk), big.mark = ',')}억 원과 비교하면 약 {format(round(estimated_project_margin_uk), big.mark = ',')}억 원의 여력이 남는다.
+"))
+```
+
+## 단지별 비례율 및 추정 분담금
+
+```{r proportional_ratio_by_complex, message=FALSE, results='asis'}
+post_development_asset_value_uk <- total_sales_revenue_uk
+net_distributable_value_uk <- post_development_asset_value_uk - total_development_cost_with_road_uk
+project_proportional_ratio <- net_distributable_value_uk / total_right_value_uk
+
+residential_sales_revenue_uk <- apt_member_revenue_uk + apt_general_sale_revenue_uk
+nonres_sales_revenue_uk <- officetel_member_revenue_uk + officetel_general_sale_revenue_uk
+
+residential_cost_share <- residential_far_area_m2 / above_ground_far_area_m2
+nonres_cost_share <- commercial_far_area_m2 / above_ground_far_area_m2
+residential_development_cost_uk <- total_development_cost_with_road_uk * residential_cost_share
+nonres_development_cost_uk <- total_development_cost_with_road_uk * nonres_cost_share
+
+residential_net_distributable_value_uk <- residential_sales_revenue_uk - residential_development_cost_uk
+nonres_net_distributable_value_uk <- nonres_sales_revenue_uk - nonres_development_cost_uk
+
+residential_proportional_ratio <- residential_net_distributable_value_uk / (residential_total_right_value / 10000)
+nonres_proportional_ratio <- nonres_net_distributable_value_uk / (nonres_total_right_value / 10000)
+
+residential_right_value_uk <- residential_total_right_value / 10000
+nonres_right_value_uk <- nonres_total_right_value / 10000
+residential_proportional_ratio_before_adjustment <- residential_proportional_ratio
+nonres_proportional_ratio_before_adjustment <- nonres_proportional_ratio
+
+ratio_equalization_transfer_uk <- pmax(
+  (
+    residential_net_distributable_value_uk * nonres_right_value_uk -
+      nonres_net_distributable_value_uk * residential_right_value_uk
+  ) / (residential_right_value_uk + nonres_right_value_uk),
+  0
+)
+
+ratio_equalization_transfer_uk <- pmin(ratio_equalization_transfer_uk, nonres_development_cost_uk)
+
+residential_development_cost_adjusted_uk <- residential_development_cost_uk + ratio_equalization_transfer_uk
+nonres_development_cost_adjusted_uk <- nonres_development_cost_uk - ratio_equalization_transfer_uk
+residential_net_distributable_value_adjusted_uk <- residential_sales_revenue_uk - residential_development_cost_adjusted_uk
+nonres_net_distributable_value_adjusted_uk <- nonres_sales_revenue_uk - nonres_development_cost_adjusted_uk
+residential_proportional_ratio <- residential_net_distributable_value_adjusted_uk / residential_right_value_uk
+nonres_proportional_ratio <- nonres_net_distributable_value_adjusted_uk / nonres_right_value_uk
+
+proportional_ratio_summary <- tibble::tribble(
+  ~구분, ~종후자산가액, ~`권리가액 제외 사업비`, ~`균형조정`, ~`비례율 산정 대상 금액`, ~종전자산권리가액, ~`조정 전`, ~`추정 비례율`,
+  "통합", paste0(format(round(post_development_asset_value_uk), big.mark = ","), "억"), paste0(format(round(total_development_cost_with_road_uk), big.mark = ","), "억"), "-", paste0(format(round(net_distributable_value_uk), big.mark = ","), "억"), paste0(format(round(total_right_value_uk), big.mark = ","), "억"), "-", paste0(round(project_proportional_ratio * 100, 1), "%"),
+  "주거", paste0(format(round(residential_sales_revenue_uk), big.mark = ","), "억"), paste0(format(round(residential_development_cost_adjusted_uk), big.mark = ","), "억"), paste0("+", format(round(ratio_equalization_transfer_uk), big.mark = ","), "억"), paste0(format(round(residential_net_distributable_value_adjusted_uk), big.mark = ","), "억"), paste0(format(round(residential_right_value_uk), big.mark = ","), "억"), paste0(round(residential_proportional_ratio_before_adjustment * 100, 1), "%"), paste0("<b>", round(residential_proportional_ratio * 100, 1), "%</b>"),
+  "비주거", paste0(format(round(nonres_sales_revenue_uk), big.mark = ","), "억"), paste0(format(round(nonres_development_cost_adjusted_uk), big.mark = ","), "억"), paste0("-", format(round(ratio_equalization_transfer_uk), big.mark = ","), "억"), paste0(format(round(nonres_net_distributable_value_adjusted_uk), big.mark = ","), "억"), paste0(format(round(nonres_right_value_uk), big.mark = ","), "억"), paste0(round(nonres_proportional_ratio_before_adjustment * 100, 1), "%"), paste0("<b>", round(nonres_proportional_ratio * 100, 1), "%</b>")
+)
+
+kable(
+  proportional_ratio_summary,
+  format = "html",
+  escape = FALSE,
+  caption = "표 26. 정비사업 방식 비례율 산정",
+  align = c("l", "r", "r", "r", "r", "r", "r", "r")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 13
+  ) %>%
+  column_spec(1, bold = TRUE)
+
+residential_profitability_by_bldg <- residential_right_by_bldg %>%
+  select(bldg_nm, hh, right_value_uk) %>%
+  left_join(
+    apt_member_allocation %>%
+      select(
+        bldg_nm,
+        scaled_hh,
+        assigned_unit_mix,
+        avg_assigned_exclusive_area_m2,
+        member_sale_revenue_uk,
+        member_market_value_uk
+      ),
+    by = "bldg_nm"
+  ) %>%
+  filter(!is.na(scaled_hh), scaled_hh > 0) %>%
+  mutate(
+    recognized_right_value_uk = right_value_uk * residential_proportional_ratio,
+    estimated_contribution_uk = member_sale_revenue_uk - recognized_right_value_uk,
+    net_after_value_uk = member_market_value_uk - estimated_contribution_uk,
+    surplus_vs_current_right_uk = net_after_value_uk - right_value_uk,
+    right_value_per_hh_uk = right_value_uk / scaled_hh,
+    recognized_right_per_hh_uk = recognized_right_value_uk / scaled_hh,
+    member_sale_price_per_hh_uk = member_sale_revenue_uk / scaled_hh,
+    market_value_per_hh_uk = member_market_value_uk / scaled_hh,
+    contribution_per_hh_uk = estimated_contribution_uk / scaled_hh,
+    surplus_per_hh_uk = surplus_vs_current_right_uk / scaled_hh
+  ) %>%
+  arrange(desc(surplus_vs_current_right_uk))
+
+cat(glue::glue("
+주거 단지별 수익성은 단지별 권리가액 총액에 주거부문 비례율 {round(residential_proportional_ratio * 100, 1)}%를 적용한 뒤, 조합원 배정 아파트의 분양가와 비교하여 산정하였다. 조합원 배정 면적은 표 13의 실제 계획 평형 재고를 기준으로 배정하였고, 전용률 75%를 적용해 공급면적으로 환산하였다. 배정 후 시가는 동일 공급면적에 신축 입주 후 아파트 시가 가정인 평당 {format(apt_market_price, big.mark = ',')}만원을 곱해 산정하였다. 따라서 표의 분담금은 실제 고지액이 아니라 본 시나리오의 권리가액·비례율·배정평형·시가 가정에 따른 추정치이다.
+"))
+
+residential_profitability_by_bldg %>%
+  transmute(
+    단지명 = bldg_nm,
+    `배정평형` = assigned_unit_mix,
+    `환산 세대수` = format(round(scaled_hh), big.mark = ","),
+    `현재 권리가액` = paste0(format(round(right_value_uk), big.mark = ","), "억"),
+    `비례율 적용 권리가액` = paste0(format(round(recognized_right_value_uk), big.mark = ","), "억"),
+    `세대당 현재 권리가액` = paste0(format(round(right_value_per_hh_uk, 2), big.mark = ","), "억"),
+    `세대당 비례권리가액` = paste0(format(round(recognized_right_per_hh_uk, 2), big.mark = ","), "억"),
+    `세대당 조합원 분양가` = paste0(format(round(member_sale_price_per_hh_uk, 2), big.mark = ","), "억"),
+    `세대당 분담금` = if_else(
+      contribution_per_hh_uk >= 0,
+      paste0(format(round(contribution_per_hh_uk, 2), big.mark = ","), "억"),
+      paste0("환급 ", format(round(abs(contribution_per_hh_uk), 2), big.mark = ","), "억")
+    ),
+    `세대당 배정 후 시가` = paste0(format(round(market_value_per_hh_uk, 2), big.mark = ","), "억"),
+    `세대당 순여유` = paste0(format(round(surplus_per_hh_uk, 2), big.mark = ","), "억"),
+    `단지 총 순여유` = paste0(format(round(surplus_vs_current_right_uk), big.mark = ","), "억")
+  ) %>%
+  kable(
+    format = "html",
+    caption = "표 27. 주거 단지별 비례율 적용 수익성",
+    align = c("l", "l", "r", "r", "r", "r", "r", "r", "r", "r", "r", "r")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 12
+  ) %>%
+  scroll_box(width = "100%")
+
+nonres_profitability_by_bldg <- nonres_right_by_bldg %>%
+  select(bldg_nm, land_area, allocated_land_area, right_value_uk) %>%
+  left_join(
+    officetel_member_allocation %>%
+      select(
+        bldg_nm,
+        right_share,
+        member_supply_area_py,
+        member_sale_revenue_uk,
+        member_market_value_uk
+      ),
+    by = "bldg_nm"
+  ) %>%
+  mutate(
+    recognized_right_value_uk = right_value_uk * nonres_proportional_ratio,
+    estimated_contribution_uk = member_sale_revenue_uk - recognized_right_value_uk,
+    net_after_value_uk = member_market_value_uk - estimated_contribution_uk,
+    surplus_vs_current_right_uk = net_after_value_uk - right_value_uk,
+    contribution_per_land_m2_uk = estimated_contribution_uk / allocated_land_area,
+    surplus_per_land_m2_uk = surplus_vs_current_right_uk / allocated_land_area
+  ) %>%
+  arrange(desc(surplus_vs_current_right_uk))
+
+cat(glue::glue("
+비주거 권리자의 배정 후 시가는 각 권리자의 개발대상 환산 대지면적에 최소 200% 용적률을 적용한 오피스텔 공급면적을 조합원 배정 대상으로 보고 산정하였다. 이 기준에 따라 일반 오피스텔 공급면적 중 약 {round(officetel_member_allocation_ratio * 100, 1)}%가 비주거 권리자 조합원 배정분이 된다. 비주거 권리가액에는 비주거부문 비례율 {round(nonres_proportional_ratio * 100, 1)}%를 적용하였다. 시가 산정에는 브라이튼 여의도 오피스텔 기준가에 5년간 표준건축비 상승률 3%를 누적한 평당 {format(officetel_sale_price, big.mark = ',')}만원을 적용하였다. 오피스텔 조합원 분양가는 같은 일반분양가의 75%인 평당 {format(officetel_member_price, big.mark = ',')}만원으로 보았다. 근생·노유자 면적은 분양수입에서는 제외하되, 상업지역 용적률 산정 연면적과 공사비에는 포함하였다.
+"))
+
+nonres_profitability_by_bldg %>%
+  transmute(
+    건물명 = bldg_nm,
+    `개발대상 환산면적` = paste0(format(round(allocated_land_area), big.mark = ","), "㎡"),
+    `현재 권리가액` = paste0(format(round(right_value_uk), big.mark = ","), "억"),
+    `비례율 적용 권리가액` = paste0(format(round(recognized_right_value_uk), big.mark = ","), "억"),
+    `오피스텔 배정 공급면적` = paste0(format(round(member_supply_area_py), big.mark = ","), "평"),
+    `조합원 분양가` = paste0(format(round(member_sale_revenue_uk), big.mark = ","), "억"),
+    `추정 분담금` = if_else(
+      estimated_contribution_uk >= 0,
+      paste0(format(round(estimated_contribution_uk), big.mark = ","), "억"),
+      paste0("환급 ", format(round(abs(estimated_contribution_uk)), big.mark = ","), "억")
+    ),
+    `㎡당 분담금` = if_else(
+      contribution_per_land_m2_uk >= 0,
+      paste0(format(round(contribution_per_land_m2_uk, 3), big.mark = ","), "억"),
+      paste0("환급 ", format(round(abs(contribution_per_land_m2_uk), 3), big.mark = ","), "억")
+    ),
+    `배정 후 시가` = paste0(format(round(member_market_value_uk), big.mark = ","), "억"),
+    `현재 권리가액 대비 순여유` = paste0(format(round(surplus_vs_current_right_uk), big.mark = ","), "억")
+  ) %>%
+  kable(
+    format = "html",
+    caption = "표 28. 비주거 권리자별 오피스텔 비례율 적용 수익성",
+    align = c("l", "r", "r", "r", "r", "r", "r", "r", "r", "r")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 12
+  ) %>%
+  scroll_box(width = "100%")
+
+cat(glue::glue("
+정비사업 방식의 비례율은 권리가액을 비용으로 중복 차감하지 않고, 종후자산가액에서 권리가액 제외 사업비를 차감한 금액을 종전자산 권리가액으로 나누어 산정하였다. 여기서 종후자산가액은 입주 후 시가가 아니라 조합원 분양수입과 외부 일반분양 현금유입을 합산한 분양수입 기준으로 보았다. 통합 비례율은 참고값으로 제시하되, 주거 단지별 분담금에는 주거부문 비례율을, 비주거 권리자별 분담금에는 비주거부문 비례율을 적용하였다. 권리가액 제외 사업비는 우선 주거지역과 상업지역의 용적률 산정 연면적 비중으로 배분하되, 상업지역 비례율이 과도하게 낮아지는 것을 방지하기 위해 {format(round(ratio_equalization_transfer_uk), big.mark = ',')}억 원을 주거부문이 추가 부담하는 균형조정을 반영하였다. 이는 통합개발에서 근생·노유자, 기반시설, 공공성 확보 비용의 편익이 주거부문에도 귀속된다는 점을 반영한 시나리오이다. 추정 분담금은 조합원 분양가에서 해당 부문 비례율 적용 권리가액을 차감한 값이며, 음수일 경우 환급 가능 금액으로 표시하였다.
+"))
+```
+
+
+
+
+
+
+
+
+
+## 공공용지 개발안
+
+이촌동 초입구역의 개발 논리는 단순히 노후 공동주택과 상업시설을 고밀로 치환하는 데 머물러서는 설득력이 제한된다. 현재 구역은 한강변 초입이라는 입지 잠재력에 비해 필지와 건물 단위 이용이 분절되어 있고, 노후 공동주택, 상업시설, 도로, 공원, 공공성 요소가 하나의 통합된 도시공간으로 작동하지 못하고 있다. 따라서 본 검토에서는 `public`과 `city`로 구상한 영역을 하나의 공공용지 개발안으로 묶고, 특별계획구역 지정을 전제로 한 수변 공공성, 도시기능, 보행 연결성 개선의 계획 명분으로 제시한다.
+
+공공용지 개발안의 핵심은 주거·오피스텔 공급을 전면에 세우는 것이 아니라, 민간 개발이익 일부를 공공기여, 공공복합시설, 보행 연결, 수변 접근성 개선, 도시형 랜드마크 조성으로 환원하는 계획적 교환 구조를 만드는 데 있다. 특히 강변도로로 인해 약화된 한강 접근성은 데크, 입체보행축, 수변 접근축 등으로 보완하는 방향을 검토할 필요가 있다. 이 경우 공공시설은 사업성의 단순 부담요소가 아니라, 고밀 복합개발을 도시계획적으로 정당화하는 핵심 장치가 된다.
+
+```{r fig-convention-plan, echo=FALSE, out.width="100%", fig.align="center", fig.cap="그림 7. 이촌동 초입구역 수변 공공·도시 기능 결합형 개발안 개념도"}
+if (file.exists(img_convention)) {
+  knitr::include_graphics(img_convention)
+} else {
+  cat("**이미지 파일을 찾을 수 없습니다:** ", img_convention)
+}
+```
+
+> 위 개념도는 확정 설계안이 아니라, 특별계획구역 지정을 전제로 한 공공기여·도시기능·수변 접근성 개선 방향을 시각화한 것이다. 핵심은 개별 단지의 물리적 정비가 아니라, 한강변 초입부를 하나의 통합 도시공간으로 재편하는 데 있다.
+
+```{r public-city-planning-points, echo=FALSE, results='asis'}
+public_city_planning_points <- tibble::tribble(
+  ~`계획 요소`, ~`도시계획상 의미`, ~`Rmd에서 연결할 근거`, ~`표현 시 주의점`,
+  "특별계획구역 지정",
+  "필지별 개별 개발이 아니라 통합계획을 전제로 한 공간 재편",
+  "대상지 건물·용도·면적 현황 분석, 특별계획구역 사례 및 위치도",
+  "지정 가능성을 확정적으로 표현하지 않고 제안 또는 검토 필요성으로 표현",
+  "수변 공공시설 / 컨벤션 기능",
+  "한강변 입지의 공공성·상징성 확보",
+  "개념도, public/city 영역 구상",
+  "시설명은 확정하지 않고 컨벤션·문화·전시·공공복합시설 등으로 폭넓게 표현",
+  "보행 연결축",
+  "강변도로로 단절된 한강 접근성을 계획적으로 보완",
+  "이미지와 위치도, 기존 지도 분석",
+  "실제 구조물 설치 가능성은 별도 교통·구조 검토가 필요하다고 명시",
+  "주거·오피스텔 복합개발",
+  "사업성을 확보하면서 공공기여 재원을 만드는 민간개발 엔진",
+  "총사업비, 연면적, 세대수, 분양수입 시나리오",
+  "모든 수치는 시나리오 가정으로 표시",
+  "기존 자산가치 하락 문제",
+  "현상 유지 시 토지주·주민 손실이 누적될 수 있다는 문제 제기",
+  "한가람 59㎡ 중간값 대비 상대가치 그래프",
+  "가격 하락 원인을 단정하지 않고 상대가치 저하 현상으로 표현"
+)
+
+kable(
+  public_city_planning_points,
+  format = "html",
+  caption = "표 29. 수변 공공·도시 기능 결합형 개발안의 도시계획 설득 포인트",
+  align = c("l", "l", "l", "l")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    font_size = 12
+  ) %>%
+  column_spec(1, bold = TRUE, width = "13em") %>%
+  column_spec(2, width = "18em") %>%
+  column_spec(3, width = "20em") %>%
+  column_spec(4, width = "22em") %>%
+  scroll_box(width = "100%")
+```
+
+이 공공용지 개발안은 `public`과 `city` 영역을 별도 잉여공간이 아니라 통합개발의 명분을 구성하는 핵심 공간으로 해석한다. 기존 나홀로 단지의 상대가치 저하와 개별 재건축의 한계는 현상 유지의 비용을 보여주는 자료이고, 공공용지 개발안은 그 비용을 특별계획구역 방식의 통합계획으로 전환하는 제안이다. 다만 본 이미지는 주민 설득용 확정 조감도가 아니라 도시계획자에게 이 구역을 하나의 수변 도시공간 단위로 검토할 필요가 있음을 설명하는 개념 자료로 사용한다.
+
+
+#  도시정비법상 재개발 요건 충족 여부
+
+## 도시정비법 기준 요건 요약
+
+| 항목             | 기준                        |
+|------------------|-----------------------------|
+| 노후·불량 건축물 | 전체 건물의 60% 이상         |
+| 접도율           | 6m 이상 도로 접한 필지 40% 미만 |
+| 과소필지율       | 30% 이상 (60㎡ 이하 필지)    |
+| 기반시설 부족    | 도로, 하수, 공원 등 부족     |
+| 공공성           | 지역 단절, 기반 미정비 등    |
+
+##이촌동 초입 구역에의 적용 여부
+
+- 노후도: ○○%
+- 접도율: ○○%
+- 과소필지: ○○%
+- 기반시설: ○○ (설명)
+
+→ 3개 이상 해당 시 정비 필요성 인정 가능성 높음
+
+# 주거-상업 복합개발의 사례 및 시사점
+
+## 선례 사례 분석
+
+- 반포 주공1단지: 주상복합 고밀 개발
+- 도곡동 단독주택지 재건축 사례
+- 이촌 한강맨션 고층화 계획 (연결 가능성)
+
+##향후 가능성 및 제안
+
+본 구역의 개발 명분은 단순히 노후 건축물을 새 아파트로 바꾸는 데 있지 않다. 한강변 초입이라는 입지, 기존 저이용·분절 이용, 나홀로 단지의 상대가치 저하, 공공·도시 기능 부족을 함께 고려하면 개별 필지별 정비보다 특별계획구역 방식의 통합개발안을 검토할 필요가 있다. 특히 수변 공공시설, 보행 연결축, 근생·노유자 및 공공복합기능을 개발안의 부수 요소가 아니라 계획 명분의 핵심으로 제시할 때 도시계획적 설득력이 높아진다.
+
+`convention.png`를 활용한 공공용지 개발안 개념도는 이 대안을 시각적으로 보여주는 도구이다. 이는 확정 설계안이 아니라, 도시계획자에게 이 구역을 개별 건물의 집합이 아니라 하나의 수변 도시공간 단위로 검토해야 하는 이유를 설명하는 자료로 기능한다. 따라서 향후 검토에서는 사업성 수치뿐 아니라 수변 접근성, 보행 연결, 공공기여, 도시 랜드마크 조성 가능성을 함께 제시하는 방식이 필요하다.
+
+# 데이터 출처 및 방법
+
+본 문서에 활용된 정보는 아래와 같다.
+
+- 서울시 열린데이터광장: 건축물대장 표제부
+- 대법원 인터넷등기소: 건축물 등기부등본 표제부
+- Google Maps: 위경도 좌표 수작업 수집
+- leaflet + R markdown을 통한 지도 시각화
+
+---
+
+※ 본 보고서는 사전 조사와 공공데이터 기반의 정성적 분석을 포함하며, 실제 재개발 추진과는 별개의 탐색적 문서임.
+
