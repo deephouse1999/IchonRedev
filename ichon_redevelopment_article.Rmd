@@ -1120,7 +1120,7 @@ cat("
 ")
 ```
 
-```{r fig-residential-zone, echo=FALSE, out.width="100%", fig.align="center", fig.cap="그림 5. 이촌동 초입구역 주거지역 개발안 구상도"}
+```{r fig-residential-zone, echo=FALSE, out.width="85%", fig.align="center", fig.cap="그림 5. 이촌동 초입구역 주거지역 개발안 구상도"}
 if (file.exists(img_residential_zone)) {
   knitr::include_graphics(img_residential_zone)
 } else {
