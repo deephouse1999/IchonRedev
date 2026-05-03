@@ -10,4 +10,8 @@
 
 [Open the landing page](https://deephouse1999.github.io/IchonRedev/)
 
+## Proposal PDF
+
+[이촌동초입통합재개발안.pdf](https://deephouse1999.github.io/IchonRedev/ichon-integrated-redevelopment-proposal.pdf)
+
 ![이촌동 초입구역 수변 공공·도시 기능 결합형 개발안 개념도](assets/convention.png)
