@@ -74,7 +74,12 @@ if (file.exists(img_src_commercial_zone)) {
   file.copy(img_src_commercial_zone, img_dst_commercial_zone, overwrite = TRUE)
 }
 
-img_convention <- img_dst_convention
+img_convention_compact <- file.path(img_dir, "convention_compact.jpg")
+img_convention <- if (file.exists(img_convention_compact)) {
+  img_convention_compact
+} else {
+  img_dst_convention
+}
 img_residential_zone <- img_dst_residential_zone
 img_commercial_zone <- img_dst_commercial_zone
 
@@ -1724,15 +1729,17 @@ feas_fmt_signed_uk <- function(x, digits = 1) {
     "억"
   )
 }
-feas_fmt_range_uk <- function(low, high, digits = 1) {
-  paste0(
-    format(round(low, digits), big.mark = ",", nsmall = digits, trim = TRUE),
-    " ~ ",
-    format(round(high, digits), big.mark = ",", nsmall = digits, trim = TRUE),
-    "억"
+feas_fmt_signed_readable_uk <- function(x, digits = 1) {
+  threshold <- 10^(-digits)
+  result <- feas_fmt_signed_uk(x, digits)
+  result[x > 0 & abs(x) < threshold] <- paste0(
+    "+<", format(threshold, nsmall = digits, trim = TRUE), "억"
   )
+  result[x < 0 & abs(x) < threshold] <- paste0(
+    "-<", format(threshold, nsmall = digits, trim = TRUE), "억"
+  )
+  result
 }
-
 feas_input_table <- tibble::tribble(
   ~입력항목, ~`E-1 보수`, ~`E-2 기준`, ~`E-3 상향`, ~해석,
   "주거 종후자산 가격", "8,500만원/평", "10,000만원/평", "11,500만원/평", "분양·완공 후 시장가정",
@@ -1843,9 +1850,15 @@ kable(
 
 모델 반영 사업비는 O-1·O-2의 전체 용적률 산정 연면적과 지하 연면적 가정을 대상으로 직접공사비와 간접·예비비 가산율만 적용한다. **국·공유지 취득 및 보상, 임차인 이전·영업손실, KEEP 처리, Public Contribution 블록의 구체 시설비, 강변북로 상부 연결구조, 개인 세금·대출이자**는 별도 산출하지 않았다. 사업단위 금융비·세금·설계·감리·운영비도 가산율 속에 포괄했을 뿐 기간과 금리로 검증하지 않았으므로 실제 총사업비는 크게 달라질 수 있다.
 
-### 주거 소유주별 예비 환산계수와 권리차액
+### 주거 소유주: E-2 기준값과 시나리오별 권리차액
 
-```{r feasibility_residential_owner_range, message=FALSE, warning=FALSE, results='asis'}
+소유주가 표를 읽을 때는 먼저 **E-2 기준환경의 단일값**을 보고, 그 다음 E-1·E-2·E-3에서 차액 방향이 유지되는지를 확인한다. E-2는 비교의 중심이 되는 입력조합일 뿐 실현 가능성이 가장 높거나 확정된 전망을 뜻하지 않는다.
+
+<div class="assumption-box">
+<strong>계산 순서:</strong> 기초 자산가치 proxy × 예비 환산계수 = 예비 환산권리가액 proxy → O-1 종후자산 가정가액 − 예비 환산권리가액 proxy = 계산상 권리차액. 양(+)은 추가부담 방향, 음(-)은 종후자산 가정가액보다 환산권리가액 proxy가 큰 방향이다. 음(-) 값은 환급청구권이나 지급예정액이 아니다.
+</div>
+
+```{r feasibility_residential_owner_point, message=FALSE, warning=FALSE, results='asis'}
 feas_price_anchor <- current_price_match_raw %>%
   distinct(bldg_nm, .keep_all = TRUE) %>%
   transmute(
@@ -1855,49 +1868,33 @@ feas_price_anchor <- current_price_match_raw %>%
     price_anchor_basis = valuation_basis
   )
 
-feas_price_q25 <- stats::quantile(
-  feas_price_anchor$price_per_supply_m2, 0.25, na.rm = TRUE
-)
-feas_price_q75 <- stats::quantile(
-  feas_price_anchor$price_per_supply_m2, 0.75, na.rm = TRUE
+feas_price_q50 <- stats::quantile(
+  feas_price_anchor$price_per_supply_m2, 0.50, na.rm = TRUE
 )
 
 feas_res_owner_anchor <- owner_household_assigned %>%
   left_join(feas_price_anchor, by = "bldg_nm") %>%
   mutate(
     anchor_available = !is.na(price_per_supply_m2),
-    price_per_supply_m2_low = if_else(
-      anchor_available, price_per_supply_m2, as.numeric(feas_price_q25)
+    price_per_supply_m2_base = if_else(
+      anchor_available, price_per_supply_m2, as.numeric(feas_price_q50)
     ),
-    price_per_supply_m2_high = if_else(
-      anchor_available, price_per_supply_m2, as.numeric(feas_price_q75)
-    ),
-    current_value_proxy_low_uk =
-      current_supply_area_m2 * price_per_supply_m2_low / 10000,
-    current_value_proxy_high_uk =
-      current_supply_area_m2 * price_per_supply_m2_high / 10000,
+    current_value_proxy_base_uk =
+      current_supply_area_m2 * price_per_supply_m2_base / 10000,
     assigned_supply_area_m2 =
       assigned_exclusive_area_m2 / owner_scenario_exclusive_ratio
   )
 
 feas_price_covered_households <- sum(feas_res_owner_anchor$anchor_available)
-feas_current_value_total_low_uk <-
-  sum(feas_res_owner_anchor$current_value_proxy_low_uk)
-feas_current_value_total_high_uk <-
-  sum(feas_res_owner_anchor$current_value_proxy_high_uk)
+feas_current_value_total_base_uk <-
+  sum(feas_res_owner_anchor$current_value_proxy_base_uk)
 
 feas_res_ratio_results <- feas_project_results %>%
   mutate(
-    current_value_proxy_total_low_uk = feas_current_value_total_low_uk,
-    current_value_proxy_total_high_uk = feas_current_value_total_high_uk,
-    ratio_candidate_a =
+    current_value_proxy_total_base_uk = feas_current_value_total_base_uk,
+    preliminary_ratio_base =
       res_net_value_before_existing_rights_uk /
-      current_value_proxy_total_high_uk,
-    ratio_candidate_b =
-      res_net_value_before_existing_rights_uk /
-      current_value_proxy_total_low_uk,
-    preliminary_ratio_low = pmin(ratio_candidate_a, ratio_candidate_b),
-    preliminary_ratio_high = pmax(ratio_candidate_a, ratio_candidate_b)
+      current_value_proxy_total_base_uk
   )
 
 kable(
@@ -1910,20 +1907,14 @@ kable(
       `주거 종전자산 반영 전 잔여가치` =
         feas_fmt_signed_uk(res_net_value_before_existing_rights_uk, 0),
       `기초 자산가치 proxy 총액` =
-        feas_fmt_range_uk(
-          current_value_proxy_total_low_uk,
-          current_value_proxy_total_high_uk,
-          0
-        ),
-      `예비 환산계수` = paste0(
-        round(preliminary_ratio_low * 100, 1), "% ~ ",
-        round(preliminary_ratio_high * 100, 1), "%"
-      ),
+        feas_fmt_uk(current_value_proxy_total_base_uk, 0),
+      `예비 환산계수` =
+        paste0(round(preliminary_ratio_base * 100, 1), "%"),
       `주거 소유자 집단 현금차액` =
         feas_fmt_signed_uk(res_collective_cash_gap_uk, 0)
     ),
   format = "html",
-  caption = "표 18. 주거부문 예비 환산계수 민감도(정식 비례율 아님)",
+  caption = "표 18. 주거부문 시나리오별 예비 환산계수(단일 proxy 기준, 정식 비례율 아님)",
   align = c("l", rep("r", 6))
 ) %>%
   kable_styling(
@@ -1937,39 +1928,48 @@ feas_res_owner_scenarios <- tidyr::crossing(
   feas_res_ratio_results %>%
     select(
       scenario_id, scenario_label, residential_price_per_py,
-      member_price_ratio, preliminary_ratio_low,
-      preliminary_ratio_high, ratio_candidate_a,
-      ratio_candidate_b
+      member_price_ratio, preliminary_ratio_base
     )
 ) %>%
   mutate(
     member_allocation_value_uk =
       assigned_supply_area_m2 / feas_m2_per_pyeong *
       residential_price_per_py * member_price_ratio / 10000,
-    right_value_low_anchor =
-      current_value_proxy_low_uk * ratio_candidate_b,
-    right_value_high_anchor =
-      current_value_proxy_high_uk * ratio_candidate_a,
-    scenario_right_value_low_uk = pmin(
-      right_value_low_anchor, right_value_high_anchor
-    ),
-    scenario_right_value_high_uk = pmax(
-      right_value_low_anchor, right_value_high_anchor
-    ),
-    preliminary_difference_low_uk =
-      member_allocation_value_uk - scenario_right_value_high_uk,
-    preliminary_difference_high_uk =
-      member_allocation_value_uk - scenario_right_value_low_uk,
+    recognized_right_value_proxy_uk =
+      current_value_proxy_base_uk * preliminary_ratio_base,
+    preliminary_difference_uk =
+      member_allocation_value_uk - recognized_right_value_proxy_uk,
     completion_market_value_uk =
       assigned_supply_area_m2 / feas_m2_per_pyeong *
       residential_price_per_py / 10000,
-    net_asset_change_low_uk =
-      completion_market_value_uk - current_value_proxy_high_uk -
-      preliminary_difference_high_uk,
-    net_asset_change_high_uk =
-      completion_market_value_uk - current_value_proxy_low_uk -
-      preliminary_difference_low_uk
+    net_asset_change_proxy_uk =
+      completion_market_value_uk - current_value_proxy_base_uk -
+      preliminary_difference_uk
   )
+
+feas_res_difference_check <- feas_res_owner_scenarios %>%
+  group_by(scenario_id) %>%
+  summarise(
+    household_difference_sum_uk = sum(preliminary_difference_uk),
+    .groups = "drop"
+  ) %>%
+  left_join(
+    feas_project_results %>%
+      select(scenario_id, res_collective_cash_gap_uk),
+    by = "scenario_id"
+  )
+
+stopifnot(
+  nrow(feas_res_owner_scenarios) ==
+    owner_scenario_current_households * nrow(feas_scenarios),
+  all(is.finite(feas_res_owner_scenarios$preliminary_difference_uk)),
+  all(
+    abs(
+      feas_res_difference_check$household_difference_sum_uk -
+      feas_res_difference_check$res_collective_cash_gap_uk
+    ) < 1e-6
+  )
+)
 
 feas_res_type_scenario <- feas_res_owner_scenarios %>%
   group_by(
@@ -1977,88 +1977,135 @@ feas_res_type_scenario <- feas_res_owner_scenarios %>%
   ) %>%
   summarise(
     households = n(),
-    avg_assigned_exclusive_area_m2 =
-      mean(assigned_exclusive_area_m2),
-    current_value_proxy_low_uk =
-      mean(current_value_proxy_low_uk),
-    current_value_proxy_high_uk =
-      mean(current_value_proxy_high_uk),
-    preliminary_difference_low_uk =
-      mean(preliminary_difference_low_uk),
-    preliminary_difference_high_uk =
-      mean(preliminary_difference_high_uk),
+    assigned_unit_mix = {
+      mix <- table(assigned_exclusive_area_m2)
+      paste0(
+        names(mix), "㎡ ", as.integer(mix), "가구",
+        collapse = " / "
+      )
+    },
+    current_value_proxy_base_uk =
+      mean(current_value_proxy_base_uk),
+    member_allocation_value_uk =
+      mean(member_allocation_value_uk),
+    recognized_right_value_proxy_uk =
+      mean(recognized_right_value_proxy_uk),
+    preliminary_difference_uk =
+      mean(preliminary_difference_uk),
     completion_market_value_uk =
       mean(completion_market_value_uk),
-    net_asset_change_low_uk = mean(net_asset_change_low_uk),
-    net_asset_change_high_uk = mean(net_asset_change_high_uk),
+    net_asset_change_proxy_uk =
+      mean(net_asset_change_proxy_uk),
+    price_proxy_note = if_else(
+      any(!anchor_available),
+      "14개 단지 중간값 대용*",
+      "저장 호가 proxy"
+    ),
     .groups = "drop"
   )
 
-feas_res_type_summary <- feas_res_type_scenario %>%
-  group_by(bldg_nm, current_supply_area_m2) %>%
-  summarise(
-    households = first(households),
-    avg_assigned_exclusive_area_m2 =
-      first(avg_assigned_exclusive_area_m2),
-    current_value_proxy_low_uk = first(
-      current_value_proxy_low_uk[scenario_id == "E-2"]
-    ),
-    current_value_proxy_high_uk = first(
-      current_value_proxy_high_uk[scenario_id == "E-2"]
-    ),
-    base_difference_low_uk = first(
-      preliminary_difference_low_uk[scenario_id == "E-2"]
-    ),
-    base_difference_high_uk = first(
-      preliminary_difference_high_uk[scenario_id == "E-2"]
-    ),
-    scenario_difference_low_uk =
-      min(preliminary_difference_low_uk),
-    scenario_difference_high_uk =
-      max(preliminary_difference_high_uk),
-    base_completion_market_value_uk = first(
-      completion_market_value_uk[scenario_id == "E-2"]
-    ),
-    scenario_net_change_low_uk = min(net_asset_change_low_uk),
-    scenario_net_change_high_uk = max(net_asset_change_high_uk),
-    .groups = "drop"
-  ) %>%
+feas_res_type_base <- feas_res_type_scenario %>%
+  filter(scenario_id == "E-2") %>%
   arrange(desc(current_supply_area_m2), bldg_nm)
 
 kable(
-  feas_res_type_summary %>%
+  feas_res_type_base %>%
     transmute(
       단지 = bldg_nm,
       `현 공급면적` = paste0(round(current_supply_area_m2, 1), "㎡"),
       `해당 가구` = paste0(format(households, big.mark = ","), "가구"),
-      `O-1 평균배정 전용면적` =
-        paste0(round(avg_assigned_exclusive_area_m2, 1), "㎡"),
-      `기초 자산가치 proxy/가구` = feas_fmt_range_uk(
-        current_value_proxy_low_uk,
-        current_value_proxy_high_uk,
-        1
-      ),
-      `E-2 예비 권리차액/가구` = feas_fmt_range_uk(
-        base_difference_low_uk,
-        base_difference_high_uk,
-        1
-      ),
-      `E-1~E-3 권리차액 범위` = feas_fmt_range_uk(
-        scenario_difference_low_uk,
-        scenario_difference_high_uk,
-        1
-      ),
-      `E-2 완공 후 시장가정` =
-        feas_fmt_uk(base_completion_market_value_uk, 1),
-      `E-1~E-3 순자산변화 proxy` = feas_fmt_range_uk(
-        scenario_net_change_low_uk,
-        scenario_net_change_high_uk,
-        1
-      )
+      `O-1 배정구성` = assigned_unit_mix,
+      `기초 자산가치 proxy/가구` =
+        feas_fmt_uk(current_value_proxy_base_uk, 1),
+      `E-2 종후자산 가정가액/가구` =
+        feas_fmt_uk(member_allocation_value_uk, 1),
+      `E-2 환산권리가액 proxy/가구` =
+        feas_fmt_uk(recognized_right_value_proxy_uk, 1),
+      `E-2 계산상 권리차액/가구` =
+        feas_fmt_signed_uk(preliminary_difference_uk, 1),
+      `E-2 순자산변화 proxy/가구` =
+        feas_fmt_signed_uk(net_asset_change_proxy_uk, 1),
+      `가격근거` = price_proxy_note
     ),
   format = "html",
-  caption = "표 19. 단지·현 주택형별 가구당 예비 권리차액과 순자산변화 범위",
-  align = c("l", "r", "r", "r", "r", "r", "r", "r", "r")
+  caption = "표 19. 단지·현 주택형별 E-2 기준 가구당 권리차액 단일값",
+  align = c("l", "r", "r", "l", "r", "r", "r", "r", "r", "l")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    font_size = 10
+  ) %>%
+  scroll_box(width = "100%")
+```
+
+표 19는 `E-2 종후자산 가정가액 - E-2 환산권리가액 proxy`를 한 개의 대표 계산값으로 보여준다. 기초 자산가치 proxy는 저장된 가격자료가 있는 `r format(feas_price_covered_households, big.mark = ',')`가구에 2026년 5월 호가의 95%를 공급면적 비례로 적용했다. 가격행이 없는 부대찌개건물 `r format(owner_scenario_current_households - feas_price_covered_households, big.mark = ',')`가구는 14개 단지 공급면적당 가격의 중간값을 대용했다.
+
+`E-2 순자산변화 proxy`는 `완공 후 시장가정 - 기초 자산가치 proxy - 계산상 권리차액`이다. 완공 후 가격과 일반분양 가격에 같은 단가를 사용한 산술 참고치이므로 독립적인 시세전망이나 개인 투자수익률이 아니다.
+
+```{r feasibility_residential_owner_sensitivity, message=FALSE, warning=FALSE, results='asis'}
+feas_res_type_sensitivity <- feas_res_type_scenario %>%
+  mutate(
+    scenario_key = dplyr::recode(
+      scenario_id,
+      `E-1` = "difference_e1",
+      `E-2` = "difference_e2",
+      `E-3` = "difference_e3"
+    )
+  ) %>%
+  select(
+    bldg_nm, current_supply_area_m2, households,
+    assigned_unit_mix, scenario_key, preliminary_difference_uk
+  ) %>%
+  tidyr::pivot_wider(
+    names_from = scenario_key,
+    values_from = preliminary_difference_uk
+  ) %>%
+  mutate(
+    direction_readout = case_when(
+      pmin(difference_e1, difference_e2, difference_e3) > 0 ~
+        "세 환경 모두 추가부담 방향",
+      pmax(difference_e1, difference_e2, difference_e3) < 0 ~
+        "세 환경 모두 음의 차액 방향",
+      TRUE ~ "환경에 따라 방향 전환"
+    )
+  ) %>%
+  arrange(desc(current_supply_area_m2), bldg_nm)
+
+feas_e2_additional_households <- sum(
+  feas_res_type_sensitivity$households[
+    feas_res_type_sensitivity$difference_e2 > 0
+  ]
+)
+feas_e2_negative_households <- sum(
+  feas_res_type_sensitivity$households[
+    feas_res_type_sensitivity$difference_e2 < 0
+  ]
+)
+feas_switch_households <- sum(
+  feas_res_type_sensitivity$households[
+    feas_res_type_sensitivity$direction_readout ==
+      "환경에 따라 방향 전환"
+  ]
+)
+
+kable(
+  feas_res_type_sensitivity %>%
+    transmute(
+      단지 = bldg_nm,
+      `현 공급면적` = paste0(round(current_supply_area_m2, 1), "㎡"),
+      `해당 가구` = paste0(format(households, big.mark = ","), "가구"),
+      `O-1 배정구성` = assigned_unit_mix,
+      `E-1 보수 차액/가구` =
+        feas_fmt_signed_readable_uk(difference_e1, 1),
+      `E-2 기준 차액/가구` =
+        feas_fmt_signed_readable_uk(difference_e2, 1),
+      `E-3 상향 차액/가구` =
+        feas_fmt_signed_readable_uk(difference_e3, 1),
+      `방향 판독` = direction_readout
+    ),
+  format = "html",
+  caption = "표 20. 단지·현 주택형별 E-1·E-2·E-3 계산상 권리차액 민감도",
+  align = c("l", "r", "r", "l", "r", "r", "r", "l")
 ) %>%
   kable_styling(
     bootstrap_options = c("striped", "hover", "condensed"),
@@ -2067,85 +2114,154 @@ kable(
   scroll_box(width = "100%")
 
 cat(glue::glue("
-기초 자산가치 proxy는 저장된 가격자료가 있는 {format(feas_price_covered_households, big.mark = ',')}가구에 2026년 5월 호가의 95%를 공급면적 비례로 적용했다. 가격행이 없는 부대찌개건물 {format(owner_scenario_current_households - feas_price_covered_households, big.mark = ',')}가구는 14개 단지 공급면적당 가격의 25~75분위를 사용했다. 표 19의 양(+) 권리차액은 배정가액 가정이 시나리오상 환산권리가액보다 큰 **추가부담 방향**, 음(-) 값은 그 반대인 **음의 예비 차액**이다. 음의 값이 환급청구권이나 지급액을 뜻하지 않는다.
-
-순자산변화 proxy는 `완공 후 시장가정 - 기초 자산가치 proxy - 예비 권리차액`으로 계산한 세전·금융비용 전 값이다. 현금흐름의 시점, 이주비·대출이자, 취득·보유·양도 관련 개인 세금, 실제 동·층·향, 분양자격과 소유주별 대지권을 반영하지 않았으므로 개인별 투자수익으로 해석할 수 없다.
+E-2 기준에서는 {format(feas_e2_additional_households, big.mark = ',')}가구가 양(+)의 추가부담 방향, {format(feas_e2_negative_households, big.mark = ',')}가구가 음(-)의 계산상 차액 방향이다. 이 가운데 {format(feas_switch_households, big.mark = ',')}가구는 E-1~E-3 사이에서 부호가 바뀌어 현 단계에서 부담 방향을 단정하기 어렵다.
 "))
 ```
 
-### 비주거·상가 소유주의 최소 경제성 판독
+E-1·E-3은 가격, 공사비, 지하연면적, 간접비와 기존 소유자 배정가율을 함께 바꾼 **복합 스트레스 시나리오**다. 표 20은 확률구간이나 통계적 신뢰구간이 아니다. 계산상 차액은 정식 분담금이 아니며, 대지권·층·향·상가권리·감정평가, 이주비·대출이자, 개인 세금과 실제 동·호수 배정을 반영하면 달라진다.
 
-비주거는 실제 대지권, 전유면적, 임대수익, 영업가치와 감정평가 자료가 없으므로 건물별 권리가액·분담금·수익률을 계산하지 않는다. 대신 O-2가 저층 생활지원·근생 면적의 가치를 **수입에서 제외한 상태에서도** 기존 비주거 권리를 어느 정도 수용할 여지가 있는지 집단 단위로 확인한다.
+### 비주거·상가: E-2 종후자산 가정가액과 1차 모델 균형
 
-```{r feasibility_nonres_minimum, message=FALSE, warning=FALSE, results='asis'}
+이 절이 확인하는 것은 **상부 복합용도와 외부분양의 가정가치가 현재 모델에 반영된 업무·상업 사업비를 우선 충당하는가**라는 1차 균형이다. 실제 종전 비주거 권리총액, 임차인·영업손실, 토지취득, 금융·세금, 공공시설과 외부 연결 비용이 확인되지 않았으므로 비주거 소유주의 최소 수익이나 확정 재진입 가능액을 판정하지 않는다.
+
+```{r feasibility_nonres_readout, message=FALSE, warning=FALSE, results='asis'}
 feas_com_proxy_area_m2 <-
   sum(commercial_reentry_allocation$allocation_proxy_m2)
 
 feas_nonres_results <- feas_project_results %>%
   mutate(
-    max_existing_rights_capacity_uk = pmax(
-      com_net_value_before_existing_rights_uk, 0
-    ),
-    capacity_per_proxy_m2_manwon =
-      max_existing_rights_capacity_uk * 10000 /
-      feas_com_proxy_area_m2,
-    capacity_per_recorded_room_uk =
-      max_existing_rights_capacity_uk /
-      commercial_recorded_room_count,
-    break_even_lowrise_price_per_py = if_else(
-      com_net_value_before_existing_rights_uk < 0,
-      abs(com_net_value_before_existing_rights_uk) * 10000 /
-        (commercial_life_support_floor_area_m2 /
-           feas_m2_per_pyeong),
-      0
+    external_balance_before_member_uk =
+      com_external_revenue_uk - com_modeled_cost_uk,
+    rights_and_unpriced_capacity_uk =
+      com_net_value_before_existing_rights_uk,
+    capacity_to_reentry_ratio = if_else(
+      com_member_allocation_uk != 0,
+      rights_and_unpriced_capacity_uk / com_member_allocation_uk,
+      NA_real_
     )
   )
+
+feas_nonres_base <- feas_nonres_results %>%
+  filter(scenario_id == "E-2") %>%
+  slice_head(n = 1)
+
+feas_nonres_base_allocation_price_per_py <-
+  feas_nonres_base$commercial_price_per_py *
+  feas_nonres_base$member_price_ratio
+
+cat(glue::glue("
+<div class='assumption-box'>
+<strong>E-2 기준 계산:</strong> 재진입분 가정 단가는 {format(round(feas_nonres_base$commercial_price_per_py), big.mark = ',')}만원/평 × {round(feas_nonres_base$member_price_ratio * 100)}% = <strong>{format(round(feas_nonres_base_allocation_price_per_py), big.mark = ',')}만원/평</strong>이다. 이에 따른 재진입분 종후자산 가정가액은 {format(round(feas_nonres_base$com_member_allocation_uk), big.mark = ',')}억원, 외부 일반분양 현금유입은 {format(round(feas_nonres_base$com_external_revenue_uk), big.mark = ',')}억원, 모델 반영 사업비는 {format(round(feas_nonres_base$com_modeled_cost_uk), big.mark = ',')}억원이다. 종전 권리와 미가격비용을 차감하기 전 잔여한도는 {format(round(feas_nonres_base$rights_and_unpriced_capacity_uk), big.mark = ',')}억원으로 계산된다.
+</div>
+"))
 
 kable(
   feas_nonres_results %>%
     transmute(
       경제환경 = paste0(scenario_id, " ", scenario_label),
-      `재진입 종후자산 배정가액 가정` =
+      `재진입분 종후자산 가정가액` =
         feas_fmt_uk(com_member_allocation_uk),
       `외부 일반분양 현금유입` =
         feas_fmt_uk(com_external_revenue_uk),
       `업무·상업 모델 반영 사업비` =
         feas_fmt_uk(com_modeled_cost_uk),
-      `기존 권리·미가격비용 반영 전 잔여가치` =
-        feas_fmt_signed_uk(com_net_value_before_existing_rights_uk, 0),
-      `배분 proxy 1㎡당 수용여력` = paste0(
-        format(
-          round(capacity_per_proxy_m2_manwon),
-          big.mark = ","
-        ),
-        "만원"
-      ),
-      `공부상 상가 1호당 단순환산` =
-        feas_fmt_uk(capacity_per_recorded_room_uk, 1),
-      `잔여가치 음수 시 저층부 손익분기 단가` = if_else(
-        break_even_lowrise_price_per_py > 0,
-        paste0(
-          format(
-            round(break_even_lowrise_price_per_py),
-            big.mark = ","
-          ),
-          "만원/평"
-        ),
-        "추가단가 불필요(모델상)"
-      )
+      `외부분양-모델사업비` =
+        feas_fmt_signed_uk(external_balance_before_member_uk, 0),
+      `종전권리·미가격비용 반영 전 잔여한도` =
+        feas_fmt_signed_uk(rights_and_unpriced_capacity_uk, 0),
+      `산식 참고비율(잔여한도/가정가액)` =
+        paste0(round(capacity_to_reentry_ratio * 100, 1), "%")
     ),
   format = "html",
-  caption = "표 20. O-2 비주거·상가 집단의 최소 경제성 민감도",
-  align = c("l", rep("r", 7))
+  caption = "표 21. O-2 비주거부문 미가격 권리·비용 반영 전 1차 균형",
+  align = c("l", rep("r", 6))
 ) %>%
   kable_styling(
     bootstrap_options = c("striped", "hover", "condensed"),
     font_size = 10
   ) %>%
   scroll_box(width = "100%")
+
+feas_nonres_base_building <- commercial_reentry_allocation %>%
+  mutate(
+    e2_allocation_payment_uk =
+      assigned_supply_area_m2 / feas_m2_per_pyeong *
+      feas_nonres_base_allocation_price_per_py / 10000,
+    e2_rights_unpriced_capacity_proxy_uk =
+      feas_nonres_base$rights_and_unpriced_capacity_uk * allocation_share,
+    e2_difference_proxy_uk =
+      e2_allocation_payment_uk -
+      e2_rights_unpriced_capacity_proxy_uk,
+    data_status = paste0(
+      asset_type,
+      if_else(
+        current_commercial_rooms > 0,
+        paste0(" / 공부상 ", current_commercial_rooms, "호"),
+        " / 호수 미확인"
+      )
+    ),
+    allocation_rule_note =
+      "후보별 59㎡ 1실 기본배정 + 잔여 proxy 비례·반올림",
+    preliminary_readout = case_when(
+      e2_difference_proxy_uk > 0 ~ "추가재원 방향(모델상)",
+      e2_difference_proxy_uk < 0 ~ "잔여 방향(모델상)",
+      TRUE ~ "균형(모델상)"
+    )
+  )
+
+stopifnot(
+  isTRUE(all.equal(
+    sum(feas_nonres_base_building$e2_allocation_payment_uk),
+    as.numeric(feas_nonres_base$com_member_allocation_uk),
+    tolerance = 1e-8
+  )),
+  isTRUE(all.equal(
+    sum(feas_nonres_base_building$e2_rights_unpriced_capacity_proxy_uk),
+    as.numeric(feas_nonres_base$rights_and_unpriced_capacity_uk),
+    tolerance = 1e-8
+  )),
+  isTRUE(all.equal(
+    sum(feas_nonres_base_building$e2_difference_proxy_uk),
+    as.numeric(feas_nonres_base$com_collective_cash_gap_uk),
+    tolerance = 1e-8
+  ))
+)
+
+kable(
+  feas_nonres_base_building %>%
+    transmute(
+      `건물·단지 계산그룹` = bldg_nm,
+      `자료상태` = data_status,
+      `O-2 재진입 배정구성` = assigned_unit_mix,
+      `재진입 공급면적` = paste0(
+        format(round(assigned_supply_area_m2), big.mark = ","), "㎡"
+      ),
+      `E-2 종후자산 가정가액` =
+        feas_fmt_uk(e2_allocation_payment_uk, 1),
+      `E-2 종전권리·미가격비용 잔여한도 proxy` =
+        feas_fmt_uk(e2_rights_unpriced_capacity_proxy_uk, 1),
+      `가정가액-잔여한도 proxy` =
+        feas_fmt_signed_uk(e2_difference_proxy_uk, 1),
+      `1차 판독·배분규칙` = paste0(
+        preliminary_readout, " / ", allocation_rule_note
+      )
+    ),
+  format = "html",
+  caption = "표 22. E-2 기준 건물·단지별 O-2 종후자산 가정가액과 잔여한도 proxy(권리배정표·분담금표 아님)",
+  align = c("l", "l", "l", "r", "r", "r", "r", "l")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    font_size = 9
+  ) %>%
+  scroll_box(width = "100%")
 ```
 
-표 20의 `배분 proxy 1㎡당 수용여력`과 `공부상 상가 1호당 단순환산`은 감정가나 권리단가가 아니다. 호수가 확인되지 않은 독립 비주거 건물도 있고, 공동주택 부속상가의 대지권도 확인되지 않았기 때문에 개별 소유주에게 나눌 수 있는 금액으로 읽어서는 안 된다. 저층 상가·업무 자산의 분양·임대가치, 임차인의 이전·영업손실, 재입점 위치·층·면적·관리비를 확인한 뒤 `동일용도 재진입`, `업무·의료·서비스시설 전환`, `일부 재진입+현금`, `현금청산·보상` 대안을 별도 감정평가와 합의로 비교해야 한다.
+표 21의 결론은 `1차 모델 균형은 양(+)이나 최소 경제성은 미확정`이다. E-2의 `외부분양-모델사업비` +2,274억원은 표 22의 `종후자산 가정가액-잔여한도 proxy` 합계 -2,274억원과 계산 방향만 반대인 같은 값이다. `잔여한도/가정가액`은 산식을 이해하기 위한 참고비율일 뿐 수익률이나 권리충당률이 아니다. 최종 판독식은 `모델상 잔여한도 + 저층부에서 실제 실현 가능한 순가치 - 종전 비주거 권리총액 - 미반영 사업비·보상비 ≥ 0`이며, 뒤의 세 항목은 아직 감정평가와 견적으로 채워지지 않았다.
+
+표 22의 각 행은 **건물·단지 관련 자산을 하나로 묶은 계산그룹**이지 개별 소유자나 점포의 권리가 아니다. `E-2 종후자산 가정가액`은 권리가액 차감 전 설명용 가격이며 분양대금·추가부담금이 아니다. `잔여한도 proxy`는 E-2 집단 잔여한도를 표 14의 임의 배분 가중치로 나눈 값으로 감정가·보상액·청산금이 아니다. 양(+) 차액은 추가재원 방향, 음(-) 차액은 모델상 잔여 방향일 뿐이며 음수는 환급청구권을 뜻하지 않는다. 표 22의 모든 행에는 후보별 59㎡ 1실 기본배정 규칙이 먼저 적용됐다.
+
+개별 소유주의 추가부담 0 조건은 `실제 종전자산 감정평가액 × 정식 비례율 = 선택 종후자산 배정대금`이다. 현재는 대지권·전유면적·소유자수·임대차·영업가치와 정식 비례율이 없으므로 개별 손익분기 종전자산액 산정을 보류한다. 향후에는 `동일용도 재진입`, `업무·의료·서비스시설 전환`, `일부 재진입+현금`, `현금청산·보상`을 별도 감정평가와 소유주 합의로 비교해야 한다.
 
 # 유사 도시정비형 재개발 벤치마크
 
@@ -2170,7 +2286,7 @@ kable(
       높이
     ),
   format = "html",
-  caption = "표 21. 상봉10재정비촉진구역 정량 벤치마크",
+  caption = "표 23. 상봉10재정비촉진구역 정량 벤치마크",
   col.names = c("사업", "사업유형", "구역면적(㎡)", "연면적(㎡)", "예정 세대", "높이"),
   align = c("l", "l", "r", "r", "r", "c")
 ) %>%
@@ -2206,7 +2322,7 @@ waterfront_public_program <- tibble::tribble(
 kable(
   waterfront_public_program,
   format = "html",
-  caption = "표 22. 수변 공공공간 예비 프로그램과 선행 검토과제",
+  caption = "표 24. 수변 공공공간 예비 프로그램과 선행 검토과제",
   col.names = c(
     "우선순위", "예비 프로그램", "인허가권자 관점의 공익",
     "공간구상", "선행 검토"
@@ -2248,7 +2364,7 @@ public_value_evaluation <- tibble::tribble(
 kable(
   public_value_evaluation,
   format = "html",
-  caption = "표 23. 인허가 협의용 공공가치 가설과 후보 성과지표",
+  caption = "표 25. 인허가 협의용 공공가치 가설과 후보 성과지표",
   col.names = c(
     "공공목표", "계획 가정", "인허가 검토과제",
     "후보 성과지표", "근거수준"
@@ -2292,7 +2408,7 @@ action_plan <- tibble::tribble(
 kable(
   action_plan,
   format = "html",
-  caption = "표 24. 통합개발 검토를 위한 단계별 Action Plan",
+  caption = "표 26. 통합개발 검토를 위한 단계별 Action Plan",
   col.names = c("단계", "핵심과업", "현재 단계의 산출물"),
   align = c("c", "l", "l")
 ) %>%
