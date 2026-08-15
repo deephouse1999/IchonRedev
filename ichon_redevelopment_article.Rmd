@@ -1184,12 +1184,151 @@ kable(
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
-다음 배정표는 저장된 단지별 **현재 공급면적 유형과 해당 세대수**를 810개의 가구 단위로 풀고, 전용률 75%로 환산한 현재 면적과 가장 가까운 O-1 일반주택 평형을 우선 배정한다. 같은 평형의 재고가 부족하면 **현재 환산 전용면적이 큰 세대, 원자료상 단순 가구당 대지면적이 큰 단지** 순으로 가까운 잔여 평형을 배정한다. 평형자료가 없는 부대찌개건물 5세대는 O-1 최소형 59㎡를 현재면적 대용값으로 역산한다. 이는 감정평가액·종전자산평가·동호수·분담금·소유주 선택을 반영하지 않은 임의의 설명용 규칙이다.
+다음 배정표는 저장된 810가구의 현재 주택형을 **2026년 8월 16일 네이버부동산 가격 스냅샷**과 연결한 뒤, 한가람·이촌코오롱·강촌의 최근 3개월 실거래(없으면 현재 호가)로 만든 O-1 가치곡선과 총액 차이가 가장 작은 평형을 우선 배정한다. 동일 주택형의 최근 3개월 실거래가 있으면 그 기간의 네이버 표시 평균을, 없으면 현재 확인매물 최저 호가를 썼다. 동일형 호가도 없으면 인접 확인형의 ㎡당 호가를 환산하거나 최종 과거 거래·2026년 5월 보관 호가를 별도 표시해 사용했다. 따라서 **현재면적 × 전용률 75%**는 배정 기준에서 제거했으며, 전용률 75%는 O-1 신축주택의 공급면적 환산에만 남는다.
+
+이 방식도 감정평가가 아니다. 호가와 실거래의 성격이 섞이고, 층·향·대지권·내부상태를 통제하지 못하며, 118㎡·136㎡ O-1은 기준단지 관측구간 밖 외삽이다. 평형 재고가 부족하면 810가구와 O-1 재고의 **전체 가치차 합이 가장 작아지도록** 재고 제약 매칭을 적용한다. 이는 관리처분계획상 배정·분담금·환급액이나 소유주의 선택권을 확정하지 않는 **가치기준 예비 매핑**이다.
 
 ```{r owner_allocation_by_complex, message=FALSE, warning=FALSE, results='asis'}
+owner_price_snapshot_date <- as.Date("2026-08-16")
+owner_recent_trade_cutoff <- owner_price_snapshot_date - 92
+owner_price_snapshot_path <-
+  file.path("data", "naver_price_snapshot_20260816.csv")
+
+owner_price_snapshot <- readr::read_csv(
+  owner_price_snapshot_path,
+  show_col_types = FALSE,
+  na = c("", "NA")
+) %>%
+  mutate(
+    snapshot_date = as.Date(snapshot_date),
+    reference_date = as.Date(reference_date),
+    current_supply_area_m2 = as.numeric(current_supply_area_m2),
+    matched_supply_m2 = as.numeric(matched_supply_m2),
+    matched_exclusive_m2 = as.numeric(matched_exclusive_m2),
+    reference_price_eok = as.numeric(reference_price_eok),
+    reference_supply_m2 = as.numeric(reference_supply_m2)
+  )
+
+owner_recent_rows <- owner_price_snapshot %>%
+  filter(reference_method == "recent_3m_trade")
+
+stopifnot(
+  file.exists(owner_price_snapshot_path),
+  all(owner_price_snapshot$snapshot_date == owner_price_snapshot_date),
+  all(
+    owner_recent_rows$reference_date >= owner_recent_trade_cutoff &
+      owner_recent_rows$reference_date <= owner_price_snapshot_date
+  ),
+  setequal(
+    owner_price_snapshot %>%
+      filter(role == "benchmark") %>%
+      pull(bldg_nm) %>% unique(),
+    c("한가람", "코오롱", "강촌")
+  )
+)
+
+owner_benchmark_candidates <- owner_price_snapshot %>%
+  filter(role == "benchmark", !is.na(reference_price_eok)) %>%
+  mutate(
+    anchor_band_m2 = case_when(
+      dplyr::between(matched_exclusive_m2, 55, 65) ~ 59,
+      dplyr::between(matched_exclusive_m2, 78, 92) ~ 84,
+      dplyr::between(matched_exclusive_m2, 110, 120) ~ 115,
+      TRUE ~ NA_real_
+    ),
+    source_priority = case_when(
+      reference_method == "recent_3m_trade" ~ 1L,
+      reference_method == "current_asking_same_type" ~ 2L,
+      TRUE ~ 3L
+    )
+  ) %>%
+  filter(!is.na(anchor_band_m2)) %>%
+  group_by(bldg_nm, anchor_band_m2) %>%
+  filter(source_priority == min(source_priority)) %>%
+  summarise(
+    complex_band_value_uk = median(reference_price_eok),
+    selected_source = if_else(
+      min(source_priority) == 1L,
+      "최근 3개월 실거래",
+      "현재 호가 fallback"
+    ),
+    .groups = "drop"
+  )
+
+owner_benchmark_anchor <- owner_benchmark_candidates %>%
+  group_by(anchor_band_m2) %>%
+  summarise(
+    benchmark_value_uk = median(complex_band_value_uk),
+    benchmark_complexes = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(anchor_band_m2)
+
+stopifnot(
+  identical(owner_benchmark_anchor$anchor_band_m2, c(59, 84, 115)),
+  all(owner_benchmark_anchor$benchmark_complexes == 3),
+  all(diff(owner_benchmark_anchor$benchmark_value_uk) > 0),
+  nrow(owner_benchmark_candidates) == 9,
+  all(owner_price_snapshot$reference_method %in% c(
+    "recent_3m_trade", "current_asking_same_type",
+    "current_asking_nearest_type_scaled", "latest_prior_trade",
+    "prior_trade_nearest_type_scaled", "archived_asking",
+    "missing_proxy"
+  )),
+  all(owner_price_snapshot$reference_price_eok[
+    owner_price_snapshot$reference_method != "missing_proxy"
+  ] > 0),
+  all(owner_price_snapshot$reference_supply_m2[
+    stringr::str_detect(owner_price_snapshot$reference_method, "_scaled$")
+  ] > 0)
+)
+
+owner_benchmark_value <- function(exclusive_area_m2) {
+  x <- owner_benchmark_anchor$anchor_band_m2
+  y <- owner_benchmark_anchor$benchmark_value_uk
+  ifelse(
+    exclusive_area_m2 <= x[2],
+    y[1] + (exclusive_area_m2 - x[1]) *
+      (y[2] - y[1]) / (x[2] - x[1]),
+    y[2] + (exclusive_area_m2 - x[2]) *
+      (y[3] - y[2]) / (x[3] - x[2])
+  )
+}
+
 owner_general_inventory <- owner_scenario_unit_plan %>%
   filter(공급구분 == "일반") %>%
-  transmute(exclusive_area_m2 = 전용면적_m2, units = 세대수)
+  transmute(
+    exclusive_area_m2 = 전용면적_m2,
+    units = 세대수,
+    benchmark_value_uk = owner_benchmark_value(전용면적_m2)
+  )
+
+owner_o1_value_curve <- owner_general_inventory %>%
+  transmute(
+    `O-1 전용면적` = paste0(exclusive_area_m2, "㎡"),
+    `O-1 공급면적(75% 가정)` =
+      paste0(round(exclusive_area_m2 / owner_scenario_exclusive_ratio, 1), "㎡"),
+    `기준단지 가치곡선 proxy` =
+      paste0(format(round(benchmark_value_uk, 1), nsmall = 1), "억원"),
+    `산정구간` = case_when(
+      exclusive_area_m2 %in% c(59, 84) ~ "기준점",
+      exclusive_area_m2 <= 115 ~ "84~115㎡ 보간",
+      TRUE ~ "115㎡ 초과 외삽"
+    )
+  )
+
+kable(
+  owner_o1_value_curve,
+  format = "html",
+  caption = "표 12-A. 한가람·코오롱·강촌 기반 O-1 가치곡선 proxy",
+  align = c("r", "r", "r", "l")
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    font_size = 11
+  )
+
+cat("\n\n59㎡·84㎡·115㎡ 기준점은 각 단지·면적대에서 최근 3개월 실거래를 먼저 선택하고, 해당 단지·면적대에 거래가 없을 때만 현재 호가를 사용해 만든다. 강촌 106.64㎡ 관측값은 115㎡ 기준점에 섞지 않고 중간면적 참고값으로만 보존했다. O-1 재고에는 115㎡형이 없어 표에는 94·105㎡ 보간과 118·136㎡ 외삽으로 나타난다.\n\n")
 
 owner_complex_context <- apt_summary %>%
   select(bldg_nm, hh, land_area) %>%
@@ -1211,10 +1350,66 @@ owner_missing_unit_types <- owner_complex_context %>%
   filter(missing_units > 0) %>%
   transmute(
     bldg_nm,
-    current_supply_area_m2 = 59 / owner_scenario_exclusive_ratio,
+    current_supply_area_m2 = round(
+      59 / owner_scenario_exclusive_ratio, 4
+    ),
     source_units = missing_units,
-    current_area_basis = "평형자료 없음: O-1 최소형 59㎡를 역산",
+    current_area_basis =
+      "평형 미확인: 59㎡/75% 계산용 placeholder(배정 미사용)",
     raw_land_per_household_m2
+  )
+
+owner_target_price <- owner_price_snapshot %>%
+  filter(role == "target") %>%
+  mutate(
+    price_key = paste(bldg_nm, round(current_supply_area_m2, 3)),
+    current_value_proxy_uk = case_when(
+      stringr::str_detect(reference_method, "_scaled$") ~
+        reference_price_eok * current_supply_area_m2 /
+          reference_supply_m2,
+      reference_method == "missing_proxy" ~ NA_real_,
+      TRUE ~ reference_price_eok
+    ),
+    price_basis_label = case_when(
+      reference_method == "recent_3m_trade" ~
+        "최근 3개월 평균 실거래",
+      reference_method == "current_asking_same_type" ~
+        "동일형 현재 호가",
+      reference_method == "current_asking_nearest_type_scaled" ~
+        "인접형 현재 호가 단가환산",
+      reference_method == "latest_prior_trade" ~
+        "최근 3개월 밖 최종 실거래",
+      reference_method == "prior_trade_nearest_type_scaled" ~
+        "과거 인접형 실거래 단가환산",
+      reference_method == "archived_asking" ~
+        "2026-05 보관 호가",
+      reference_method == "missing_proxy" ~
+        "가격 미확인: 대상가구 가치 하위 25% 임시값",
+      TRUE ~ "가격 미확인"
+    ),
+    price_quality_grade = case_when(
+      reference_method == "recent_3m_trade" ~ "A 최근 3개월 실거래",
+      reference_method == "current_asking_same_type" ~ "B 동일형 현재 호가",
+      reference_method == "current_asking_nearest_type_scaled" ~
+        "C 인접형 현재 호가 환산",
+      reference_method %in% c(
+        "latest_prior_trade", "prior_trade_nearest_type_scaled",
+        "archived_asking"
+      ) ~ "D 과거·보관자료",
+      TRUE ~ "E 가격 미확인 임시값"
+    ),
+    scaled_area_gap_pct = if_else(
+      stringr::str_detect(reference_method, "_scaled$") &
+        !is.na(reference_supply_m2),
+      (current_supply_area_m2 / reference_supply_m2 - 1) * 100,
+      NA_real_
+    )
+  ) %>%
+  select(
+    price_key, bldg_nm, current_supply_area_m2,
+    current_value_proxy_uk, price_basis_label,
+    price_quality_grade, scaled_area_gap_pct,
+    reference_method, reference_date, reference_supply_m2, note
   )
 
 owner_unit_type_base <- unit_size_list %>%
@@ -1231,67 +1426,171 @@ owner_unit_type_base <- unit_size_list %>%
   ) %>%
   bind_rows(owner_missing_unit_types) %>%
   mutate(
-    current_est_exclusive_area_m2 =
-      current_supply_area_m2 * owner_scenario_exclusive_ratio,
-    desired_area_m2 = vapply(
-      current_est_exclusive_area_m2,
+    price_key = paste(bldg_nm, round(current_supply_area_m2, 3))
+  ) %>%
+  left_join(
+    owner_target_price %>%
+      select(-bldg_nm, -current_supply_area_m2),
+    by = "price_key"
+  )
+
+owner_target_keys <- owner_target_price$price_key
+stopifnot(
+  length(owner_target_keys) == dplyr::n_distinct(owner_target_keys),
+  length(owner_unit_type_base$price_key) ==
+    dplyr::n_distinct(owner_unit_type_base$price_key),
+  setequal(owner_unit_type_base$price_key, owner_target_keys),
+  all(!is.na(owner_unit_type_base$reference_method)),
+  all(!is.na(owner_unit_type_base$price_quality_grade))
+)
+
+owner_known_value_pool <- owner_unit_type_base %>%
+  filter(!is.na(current_value_proxy_uk)) %>%
+  tidyr::uncount(source_units) %>%
+  pull(current_value_proxy_uk)
+
+owner_missing_value_proxy_uk <- as.numeric(
+  stats::quantile(owner_known_value_pool, 0.25, na.rm = TRUE)
+)
+
+owner_unit_type_base <- owner_unit_type_base %>%
+  mutate(
+    current_value_proxy_uk = dplyr::coalesce(
+      current_value_proxy_uk,
+      owner_missing_value_proxy_uk
+    ),
+    price_basis_label = dplyr::coalesce(
+      price_basis_label,
+      "가격 미확인: 대상가구 가치 하위 25% 임시값"
+    ),
+    desired_exclusive_area_m2 = vapply(
+      current_value_proxy_uk,
       function(x) {
-        choices <- owner_general_inventory$exclusive_area_m2
-        choices[which.min(abs(choices - x))]
+        idx <- which.min(
+          abs(owner_general_inventory$benchmark_value_uk - x)
+        )
+        owner_general_inventory$exclusive_area_m2[idx]
       },
       numeric(1)
     )
   )
 
-stopifnot(sum(owner_unit_type_base$source_units) ==
-            owner_scenario_current_households)
+stopifnot(
+  sum(owner_unit_type_base$source_units) ==
+    owner_scenario_current_households,
+  all(is.finite(owner_unit_type_base$current_value_proxy_uk)),
+  all(owner_unit_type_base$current_value_proxy_uk > 0)
+)
 
 owner_household_demand <- owner_unit_type_base %>%
   tidyr::uncount(source_units, .id = "owner_seq") %>%
   arrange(
-    desc(desired_area_m2),
-    desc(current_est_exclusive_area_m2),
-    desc(raw_land_per_household_m2),
+    current_value_proxy_uk,
     bldg_nm,
-    desc(current_supply_area_m2),
     owner_seq
   )
 
-assign_owner_units <- function(demand, inventory) {
-  remaining <- stats::setNames(
-    inventory$units,
-    as.character(inventory$exclusive_area_m2)
-  )
-  assigned <- rep(NA_real_, nrow(demand))
+assign_owner_units_value_optimal <- function(demand, inventory) {
+  supply <- inventory %>%
+    tidyr::uncount(units, .id = "inventory_seq") %>%
+    arrange(benchmark_value_uk, exclusive_area_m2, inventory_seq)
+  demand <- demand %>%
+    arrange(
+      current_value_proxy_uk, bldg_nm, owner_seq
+    )
 
-  for (i in seq_len(nrow(demand))) {
-    available <- as.numeric(names(remaining)[remaining > 0])
-    if (length(available) == 0) break
-    distance <- abs(available - demand$desired_area_m2[i])
-    candidates <- available[distance == min(distance)]
-    chosen <- max(candidates)
-    assigned[i] <- chosen
-    remaining[as.character(chosen)] <- remaining[as.character(chosen)] - 1
+  n_demand <- nrow(demand)
+  n_supply <- nrow(supply)
+  stopifnot(n_supply >= n_demand)
+
+  total_cost <- matrix(
+    Inf,
+    nrow = n_demand + 1L,
+    ncol = n_supply + 1L
+  )
+  take_supply <- matrix(
+    FALSE,
+    nrow = n_demand + 1L,
+    ncol = n_supply + 1L
+  )
+  total_cost[1L, ] <- 0
+
+  for (i in seq_len(n_demand)) {
+    for (j in seq_len(n_supply)) {
+      skip_cost <- total_cost[i + 1L, j]
+      take_cost <- total_cost[i, j] + abs(
+        demand$current_value_proxy_uk[i] -
+          supply$benchmark_value_uk[j]
+      )
+      if (take_cost <= skip_cost) {
+        total_cost[i + 1L, j + 1L] <- take_cost
+        take_supply[i + 1L, j + 1L] <- TRUE
+      } else {
+        total_cost[i + 1L, j + 1L] <- skip_cost
+      }
+    }
   }
 
-  demand$assigned_exclusive_area_m2 <- assigned
+  selected_supply_index <- integer(n_demand)
+  i <- n_demand
+  j <- n_supply
+  while (i > 0L && j > 0L) {
+    if (take_supply[i + 1L, j + 1L]) {
+      selected_supply_index[i] <- j
+      i <- i - 1L
+      j <- j - 1L
+    } else {
+      j <- j - 1L
+    }
+  }
+
+  stopifnot(i == 0L, all(selected_supply_index > 0L))
+
+  demand$assigned_exclusive_area_m2 <-
+    supply$exclusive_area_m2[selected_supply_index]
+  demand$assigned_benchmark_value_uk <-
+    supply$benchmark_value_uk[selected_supply_index]
+  demand$inventory_changed_choice <-
+    demand$assigned_exclusive_area_m2 !=
+    demand$desired_exclusive_area_m2
+  attr(demand, "optimal_total_cost") <-
+    total_cost[n_demand + 1L, n_supply + 1L]
   demand
 }
 
-owner_household_assigned <- assign_owner_units(
+owner_household_assigned <- assign_owner_units_value_optimal(
   owner_household_demand,
   owner_general_inventory
 )
+
+owner_allocation_optimal_cost <-
+  attr(owner_household_assigned, "optimal_total_cost")
+owner_allocation_realized_cost <- sum(abs(
+  owner_household_assigned$current_value_proxy_uk -
+    owner_household_assigned$assigned_benchmark_value_uk
+))
 
 owner_allocation_by_current_type <- owner_household_assigned %>%
   group_by(
     bldg_nm,
     current_supply_area_m2,
     raw_land_per_household_m2,
-    current_area_basis
+    current_area_basis,
+    price_basis_label,
+    price_quality_grade,
+    scaled_area_gap_pct,
+    reference_date
   ) %>%
   summarise(
     owner_households = n(),
+    current_value_proxy_uk = mean(current_value_proxy_uk),
+    desired_unit_mix = {
+      mix <- table(desired_exclusive_area_m2)
+      paste0(
+        names(mix), "㎡ ", as.integer(mix), "세대",
+        collapse = " / "
+      )
+    },
     assigned_unit_mix = {
       mix <- table(assigned_exclusive_area_m2)
       paste0(
@@ -1301,6 +1600,7 @@ owner_allocation_by_current_type <- owner_household_assigned %>%
     },
     avg_assigned_exclusive_area_m2 =
       mean(assigned_exclusive_area_m2, na.rm = TRUE),
+    inventory_changed_households = sum(inventory_changed_choice),
     .groups = "drop"
   ) %>%
   mutate(
@@ -1309,7 +1609,7 @@ owner_allocation_by_current_type <- owner_household_assigned %>%
     supply_area_change_pct =
       (avg_assigned_supply_area_m2 / current_supply_area_m2 - 1) * 100
   ) %>%
-  arrange(desc(raw_land_per_household_m2), desc(current_supply_area_m2))
+  arrange(bldg_nm, desc(current_supply_area_m2))
 
 owner_allocation_by_complex <- owner_household_assigned %>%
   group_by(bldg_nm, raw_land_per_household_m2) %>%
@@ -1333,31 +1633,142 @@ owner_largest_contraction <- owner_allocation_by_complex %>%
 owner_largest_expansion <- owner_allocation_by_complex %>%
   slice_max(supply_area_change_pct, n = 1, with_ties = FALSE)
 
+owner_assigned_count <- owner_household_assigned %>%
+  count(assigned_exclusive_area_m2, name = "assigned_units")
+
+owner_external_inventory <- owner_general_inventory %>%
+  left_join(
+    owner_assigned_count,
+    by = c("exclusive_area_m2" = "assigned_exclusive_area_m2")
+  ) %>%
+  mutate(
+    assigned_units = dplyr::coalesce(assigned_units, 0L),
+    external_units = units - assigned_units
+  )
+
+owner_external_inventory_mix <- owner_external_inventory %>%
+  filter(external_units > 0) %>%
+  summarise(
+    label = paste0(
+      exclusive_area_m2, "㎡ ", external_units, "세대",
+      collapse = " / "
+    )
+  ) %>%
+  pull(label)
+
+owner_inventory_changed_households <-
+  sum(owner_household_assigned$inventory_changed_choice)
+
+owner_price_quality_summary <- owner_household_assigned %>%
+  count(price_quality_grade, name = "households") %>%
+  arrange(price_quality_grade) %>%
+  mutate(
+    label = paste0(
+      price_quality_grade, " ", format(households, big.mark = ","),
+      "가구(", round(households / sum(households) * 100, 1), "%)"
+    )
+  )
+
+owner_price_quality_label <- paste(
+  owner_price_quality_summary$label,
+  collapse = " · "
+)
+owner_direct_price_households <- owner_price_quality_summary %>%
+  filter(stringr::str_detect(price_quality_grade, "^A|^B")) %>%
+  summarise(n = sum(households)) %>%
+  pull(n)
+owner_scaled_price_households <- owner_price_quality_summary %>%
+  filter(stringr::str_detect(price_quality_grade, "^C")) %>%
+  summarise(n = sum(households)) %>%
+  pull(n)
+
+owner_assigned_supply_area_m2 <- sum(
+  owner_household_assigned$assigned_exclusive_area_m2 /
+    owner_scenario_exclusive_ratio
+)
+owner_current_supply_area_proxy_m2 <- sum(
+  owner_household_assigned$current_supply_area_m2
+)
+owner_supply_area_change_pct <-
+  (owner_assigned_supply_area_m2 /
+     owner_current_supply_area_proxy_m2 - 1) * 100
+
 kable(
   owner_allocation_by_current_type %>%
     transmute(
       단지 = bldg_nm,
-      `현재 공급면적` = paste0(round(current_supply_area_m2, 1), "㎡"),
+      `현재 공급면적` = if_else(
+        stringr::str_detect(current_area_basis, "평형 미확인"),
+        "미확인",
+        paste0(round(current_supply_area_m2, 1), "㎡")
+      ),
       `해당 세대수` = format(owner_households, big.mark = ","),
-      `현재면적 근거` = current_area_basis,
-      `단순 가구당 대지면적` = paste0(round(raw_land_per_household_m2, 1), "㎡"),
-      `O-1 배정평형 구성` = assigned_unit_mix,
-      `평균 배정 전용면적` = paste0(round(avg_assigned_exclusive_area_m2, 1), "㎡"),
-      `평균 배정 공급면적` = paste0(round(avg_assigned_supply_area_m2, 1), "㎡"),
-      `공급면적 변화` = sprintf("%+.1f%%", supply_area_change_pct)
+      `현재가치 proxy/가구` =
+        paste0(format(round(current_value_proxy_uk, 1), nsmall = 1), "억원"),
+      `가격근거` = paste0(
+        price_quality_grade, " · ", price_basis_label,
+        if_else(
+          is.na(scaled_area_gap_pct),
+          "",
+          paste0(
+            " · 환산면적차 ", sprintf("%+.1f", scaled_area_gap_pct), "%",
+            if_else(abs(scaled_area_gap_pct) >= 20, "(저신뢰)", "")
+          )
+        ),
+        if_else(
+          is.na(reference_date),
+          "",
+          if_else(
+            price_quality_grade == "A 최근 3개월 실거래",
+            paste0(
+              " (", owner_recent_trade_cutoff, "~",
+              owner_price_snapshot_date, "; 구성건수 미보존)"
+            ),
+            paste0(" (", reference_date, ")")
+          )
+        )
+      ),
+      `가치기준 1순위` = desired_unit_mix,
+      `재고반영 최종배정` = assigned_unit_mix,
+      `가치 1순위 대비 재고조정` =
+        paste0(inventory_changed_households, "세대"),
+      `평균 배정 공급면적` =
+        paste0(round(avg_assigned_supply_area_m2, 1), "㎡")
     ),
   format = "html",
-  caption = "표 12. O-1 단지·현 공급면적 유형별 가구당 배정 예시",
-  align = c("l", "r", "r", "l", "r", "l", "r", "r", "r")
+  caption = "표 12-B. 최근가격 우선·보완 proxy 가치기준 O-1 가구당 배정 예시",
+  align = c("l", "r", "r", "r", "l", "l", "l", "r", "r")
 ) %>%
   kable_styling(
     bootstrap_options = c("striped", "hover", "condensed"),
-    font_size = 12
-  )
+    font_size = 10
+  ) %>%
+  scroll_box(width = "100%")
 
 cat(glue::glue("
-O-1 규칙에서는 평균 공급면적 변화가 가장 작은 방향으로 나타나는 단지가 **{owner_largest_contraction$bldg_nm}**({round(owner_largest_contraction$supply_area_change_pct, 1)}%), 가장 큰 방향으로 나타나는 단지가 **{owner_largest_expansion$bldg_nm}**(+{round(owner_largest_expansion$supply_area_change_pct, 1)}%)다. 이 차이는 실제 권리가액이 아니라 제한된 평형 재고와 임의 배정순서에서 발생한 결과이므로, 향후 감정평가와 소유주 선택조사가 들어오면 전면 재산정해야 한다.
+가격자료 등급은 **{owner_price_quality_label}**다. 최근 3개월 실거래 또는 동일형 현재 호가를 직접 연결한 가구는 **{format(owner_direct_price_households, big.mark = ',')}가구**, 인접형 현재 호가를 면적비로 환산한 가구는 **{format(owner_scaled_price_households, big.mark = ',')}가구**다. 네이버 화면의 최근 3개월 평균값은 화면 표시값을 전사했으며, 그 평균을 구성한 개별 거래건수·목록은 스냅샷에 보존하지 못했다.
+
+가치기준 O-1 규칙에서 평균 공급면적 **감소폭이 가장 큰** 단지는 **{owner_largest_contraction$bldg_nm}**({round(owner_largest_contraction$supply_area_change_pct, 1)}%), 변화율이 가장 높은 단지는 **{owner_largest_expansion$bldg_nm}**({sprintf('%+.1f', owner_largest_expansion$supply_area_change_pct)}%)다. 소유주 배정 공급면적은 약 **{format(round(owner_assigned_supply_area_m2), big.mark = ',')}㎡**로 현 공급면적 proxy 약 **{format(round(owner_current_supply_area_proxy_m2), big.mark = ',')}㎡**보다 평균 **{round(abs(owner_supply_area_change_pct), 1)}% 작은 방향**이다. 부대찌개건물 5가구의 현 면적은 미확인이어서 이 면적합계에 59㎡ 신축형의 공급면적 placeholder가 포함되지만, 가치배정 순서에는 쓰지 않았다. 한가람·코오롱·강촌 가격곡선과 제한된 O-1 재고 사이의 전체 가치차 합을 최소화했지만, 가치기준 1순위와 최종평형이 달라진 가구는 **{format(owner_inventory_changed_households, big.mark = ',')}가구**다. 이 배정 뒤 외부분양 후보 재고는 **{owner_external_inventory_mix}**로 남는다. 외부분양 수입모형은 이 평형구성에 단일 ㎡당 가격을 적용하므로 평형별 가격차도 반영하지 못한다. 같은 가치 proxy끼리는 단지명과 계산용 가구순번으로 순서를 고정하며, 동일 현재 주택형이 여러 O-1 평형으로 갈라져도 이 순번은 개인별 배정순서·우선권·선택권을 정하지 않는다. 따라서 표는 가격뿐 아니라 O-1 평형 재고구성이 바뀌어도 크게 달라지며, 감정평가와 소유주 선택조사가 들어오면 전면 재산정해야 한다.
 "))
+
+stopifnot(
+  nrow(owner_household_assigned) == owner_scenario_current_households,
+  all(!is.na(owner_household_assigned$assigned_exclusive_area_m2)),
+  all(!is.na(owner_household_assigned$current_value_proxy_uk)),
+  abs(owner_allocation_realized_cost -
+        owner_allocation_optimal_cost) < 1e-6,
+  sum(owner_external_inventory$external_units) ==
+    owner_scenario_general_sale_units,
+  all(
+    owner_assigned_count$assigned_units <=
+      owner_general_inventory$units[
+        match(
+          owner_assigned_count$assigned_exclusive_area_m2,
+          owner_general_inventory$exclusive_area_m2
+        )
+      ]
+  )
+)
 ```
 
 ```{r owner_residential_concept_figure, echo=FALSE, out.width="85%", fig.align="center", fig.cap="그림 4. 용적률 380%·1,220세대 가정을 시각화한 주거블록 배치 예시"}
@@ -1642,7 +2053,7 @@ kable(
 아래 계산은 O-1(주거 용적률 380%·1,220세대)과 O-2(업무·상업 용적률 450%·상부 360실)를 동시에 채택한다고 가정한 별도 경제성 시나리오다. 표 10과 표 15의 다른 공공기여율·용적률 조합에 자동 적용되는 결과가 아니며, O-1·O-2의 물리적 규모가 달라지면 모든 수입·사업비·권리차액을 다시 계산해야 한다.
 
 <div class="assumption-box">
-<strong>예비검토 범위:</strong> 다음 표의 기초 자산가치는 저장된 2026년 5월 호가에 5% 협상률을 적용한 대용값이고 감정평가액이 아니다. 예비 환산계수는 정식 비례율이 아니며, 예비 권리차액은 법정 분담금·추가부담금·청산금 또는 환급액이 아니다. 특별계획구역 검토가 조합방식, 관리처분 또는 특정 권리배분 방식을 자동 결정하지도 않는다.
+<strong>예비검토 범위:</strong> 다음 표의 기초 자산가치는 2026년 8월 16일 네이버부동산에서 확인한 주택형별 최근 3개월 실거래 또는 현재 호가를 우선한 대용값이며 감정평가액이 아니다. 동일형 자료가 없는 행에는 인접형 단가환산·최근 3개월 밖 거래·2026년 5월 보관 호가가 포함된다. 예비 환산계수는 정식 비례율이 아니며, 예비 권리차액은 법정 분담금·추가부담금·청산금 또는 환급액이 아니다. 특별계획구역 검토가 조합방식, 관리처분 또는 특정 권리배분 방식을 자동 결정하지도 않는다.
 </div>
 
 ### O-1·O-2 재고와 경제환경 가정
@@ -1854,38 +2265,27 @@ kable(
 
 소유주가 표를 읽을 때는 먼저 **E-2 기준환경의 단일값**을 보고, 그 다음 E-1·E-2·E-3에서 차액 방향이 유지되는지를 확인한다. E-2는 비교의 중심이 되는 입력조합일 뿐 실현 가능성이 가장 높거나 확정된 전망을 뜻하지 않는다.
 
+표 12-A의 가격곡선은 **기존 한가람·코오롱·강촌 가격으로 O-1 평형을 선택하기 위한 비교 proxy**다. 반면 표 19의 종후자산 가정가액은 별도의 **신축 일반분양 단가와 기존 소유자 배정가율 시나리오**로 계산한다. 두 표는 목적과 가격체계가 다르므로 같은 평형의 금액이 일치하지 않으며, 어느 쪽도 감정평가액이나 확정 분양가가 아니다.
+
 <div class="assumption-box">
 <strong>계산 순서:</strong> 기초 자산가치 proxy × 예비 환산계수 = 예비 환산권리가액 proxy → O-1 종후자산 가정가액 − 예비 환산권리가액 proxy = 계산상 권리차액. 양(+)은 추가부담 방향, 음(-)은 종후자산 가정가액보다 환산권리가액 proxy가 큰 방향이다. 음(-) 값은 환급청구권이나 지급예정액이 아니다.
 </div>
 
 ```{r feasibility_residential_owner_point, message=FALSE, warning=FALSE, results='asis'}
-feas_price_anchor <- current_price_match_raw %>%
-  distinct(bldg_nm, .keep_all = TRUE) %>%
-  transmute(
-    bldg_nm,
-    price_per_supply_m2 = target_value_price / target_value_area,
-    price_anchor_month = target_value_month,
-    price_anchor_basis = valuation_basis
-  )
-
-feas_price_q50 <- stats::quantile(
-  feas_price_anchor$price_per_supply_m2, 0.50, na.rm = TRUE
-)
-
 feas_res_owner_anchor <- owner_household_assigned %>%
-  left_join(feas_price_anchor, by = "bldg_nm") %>%
   mutate(
-    anchor_available = !is.na(price_per_supply_m2),
-    price_per_supply_m2_base = if_else(
-      anchor_available, price_per_supply_m2, as.numeric(feas_price_q50)
+    anchor_available = dplyr::coalesce(
+      reference_method != "missing_proxy", FALSE
     ),
-    current_value_proxy_base_uk =
-      current_supply_area_m2 * price_per_supply_m2_base / 10000,
+    current_value_proxy_base_uk = current_value_proxy_uk,
     assigned_supply_area_m2 =
       assigned_exclusive_area_m2 / owner_scenario_exclusive_ratio
   )
 
-feas_price_covered_households <- sum(feas_res_owner_anchor$anchor_available)
+feas_price_covered_households <- sum(
+  feas_res_owner_anchor$anchor_available,
+  na.rm = TRUE
+)
 feas_current_value_total_base_uk <-
   sum(feas_res_owner_anchor$current_value_proxy_base_uk)
 
@@ -1909,7 +2309,13 @@ kable(
       `기초 자산가치 proxy 총액` =
         feas_fmt_uk(current_value_proxy_total_base_uk, 0),
       `예비 환산계수` =
-        paste0(round(preliminary_ratio_base * 100, 1), "%"),
+        paste0(
+          format(
+            round(preliminary_ratio_base * 100, 1),
+            nsmall = 1
+          ),
+          "%"
+        ),
       `주거 소유자 집단 현금차액` =
         feas_fmt_signed_uk(res_collective_cash_gap_uk, 0)
     ),
@@ -1996,11 +2402,11 @@ feas_res_type_scenario <- feas_res_owner_scenarios %>%
       mean(completion_market_value_uk),
     net_asset_change_proxy_uk =
       mean(net_asset_change_proxy_uk),
-    price_proxy_note = if_else(
-      any(!anchor_available),
-      "14개 단지 중간값 대용*",
-      "저장 호가 proxy"
-    ),
+    price_proxy_note = dplyr::first(price_basis_label),
+    price_quality_note = dplyr::first(price_quality_grade),
+    price_scaled_area_gap_pct = dplyr::first(scaled_area_gap_pct),
+    price_reference_date = dplyr::first(reference_date),
+    current_area_basis = dplyr::first(current_area_basis),
     .groups = "drop"
   )
 
@@ -2012,7 +2418,11 @@ kable(
   feas_res_type_base %>%
     transmute(
       단지 = bldg_nm,
-      `현 공급면적` = paste0(round(current_supply_area_m2, 1), "㎡"),
+      `현 공급면적` = if_else(
+        stringr::str_detect(current_area_basis, "평형 미확인"),
+        "미확인",
+        paste0(round(current_supply_area_m2, 1), "㎡")
+      ),
       `해당 가구` = paste0(format(households, big.mark = ","), "가구"),
       `O-1 배정구성` = assigned_unit_mix,
       `기초 자산가치 proxy/가구` =
@@ -2023,9 +2433,36 @@ kable(
         feas_fmt_uk(recognized_right_value_proxy_uk, 1),
       `E-2 계산상 권리차액/가구` =
         feas_fmt_signed_uk(preliminary_difference_uk, 1),
-      `E-2 순자산변화 proxy/가구` =
+      `차액 전액 정산 가정 산술잔액/가구` =
         feas_fmt_signed_uk(net_asset_change_proxy_uk, 1),
-      `가격근거` = price_proxy_note
+      `가격근거` = paste0(
+        price_quality_note, " · ", price_proxy_note,
+        if_else(
+          is.na(price_scaled_area_gap_pct),
+          "",
+          paste0(
+            " · 환산면적차 ",
+            sprintf("%+.1f", price_scaled_area_gap_pct), "%",
+            if_else(
+              abs(price_scaled_area_gap_pct) >= 20,
+              "(저신뢰)",
+              ""
+            )
+          )
+        ),
+        if_else(
+          is.na(price_reference_date),
+          "",
+          if_else(
+            price_quality_note == "A 최근 3개월 실거래",
+            paste0(
+              " (", owner_recent_trade_cutoff, "~",
+              owner_price_snapshot_date, "; 구성건수 미보존)"
+            ),
+            paste0(" (", price_reference_date, ")")
+          )
+        )
+      )
     ),
   format = "html",
   caption = "표 19. 단지·현 주택형별 E-2 기준 가구당 권리차액 단일값",
@@ -2038,9 +2475,9 @@ kable(
   scroll_box(width = "100%")
 ```
 
-표 19는 `E-2 종후자산 가정가액 - E-2 환산권리가액 proxy`를 한 개의 대표 계산값으로 보여준다. 기초 자산가치 proxy는 저장된 가격자료가 있는 `r format(feas_price_covered_households, big.mark = ',')`가구에 2026년 5월 호가의 95%를 공급면적 비례로 적용했다. 가격행이 없는 부대찌개건물 `r format(owner_scenario_current_households - feas_price_covered_households, big.mark = ',')`가구는 14개 단지 공급면적당 가격의 중간값을 대용했다.
+표 19는 `E-2 종후자산 가정가액 - E-2 환산권리가액 proxy`를 한 개의 대표 계산값으로 보여준다. 기초 자산가치 proxy는 O-1 배정에 사용한 것과 동일한 2026년 8월 16일 가격 스냅샷을 재사용한다. 즉 `r format(feas_price_covered_households, big.mark = ',')`가구는 최근 3개월 실거래·현재 호가·명시된 보완자료 중 하나를 쓰고, **확인가격이 없는** 부대찌개건물 `r format(owner_scenario_current_households - feas_price_covered_households, big.mark = ',')`가구만 알려진 대상가구 가치의 하위 25%를 임시 대용한다. 호가에 5%를 일괄 할인하던 기존 방식은 제거했다.
 
-`E-2 순자산변화 proxy`는 `완공 후 시장가정 - 기초 자산가치 proxy - 계산상 권리차액`이다. 완공 후 가격과 일반분양 가격에 같은 단가를 사용한 산술 참고치이므로 독립적인 시세전망이나 개인 투자수익률이 아니다.
+`차액 전액 정산 가정 산술잔액`은 `완공 후 시장가정 - 기초 자산가치 proxy - 계산상 권리차액`이다. 특히 E-2에서는 종후자산 가정가액을 외부 분양가의 `r round(feas_scenarios$member_price_ratio[feas_scenarios$scenario_id == 'E-2'] * 100, 1)`%로 두고 예비 환산계수도 `r format(round(feas_res_ratio_results$preliminary_ratio_base[feas_res_ratio_results$scenario_id == 'E-2'] * 100, 1), nsmall = 1)`%로 계산하므로 이 잔액이 **가정상 기계적으로 양(+) 방향**이 된다. 음(-) 권리차액을 실제 환급금처럼 전액 정산한다는 뜻도 아니며, 독립적인 시세전망·개인 투자수익률·보장 이익으로 해석할 수 없다.
 
 ```{r feasibility_residential_owner_sensitivity, message=FALSE, warning=FALSE, results='asis'}
 feas_res_type_sensitivity <- feas_res_type_scenario %>%
@@ -2421,11 +2858,12 @@ kable(
 
 - **건축물·토지 현황**: 서울시 열린데이터 건축물대장 표제부와 저장된 정리자료. 공부상 정보와 현황이 다를 수 있으며 원천데이터는 수정하지 않았다.
 - **실거래가**: 기존에 저장된 국토교통부 실거래가 CSV. 한가람 59.5~60.2㎡ 월 중간값과 동월 대상단지 거래를 비교했으며, 거래 희소성과 물건 특성 차이를 통제하지 못한다.
+- **O-1 가격 스냅샷**: 2026.8.16 네이버부동산의 주택형별 최근 3개월 평균 실거래를 우선하고, 없으면 현재 확인매물 최저 호가를 사용했다. 동일형 자료가 없을 때에는 인접 확인형 단가환산, 최근 3개월 밖 최종 거래 또는 2026.5.1 보관 호가를 명시적으로 사용했다. 810가구 중 A 최근 3개월 실거래 `r owner_price_quality_summary$households[owner_price_quality_summary$price_quality_grade == 'A 최근 3개월 실거래']`가구, B 동일형 현재 호가 `r owner_price_quality_summary$households[owner_price_quality_summary$price_quality_grade == 'B 동일형 현재 호가']`가구, C 인접형 현재 호가 환산 `r owner_price_quality_summary$households[owner_price_quality_summary$price_quality_grade == 'C 인접형 현재 호가 환산']`가구, D 과거·보관자료 `r owner_price_quality_summary$households[owner_price_quality_summary$price_quality_grade == 'D 과거·보관자료']`가구, E 가격 미확인 임시값 `r owner_price_quality_summary$households[owner_price_quality_summary$price_quality_grade == 'E 가격 미확인 임시값']`가구다. 네이버 화면 표시 평균을 구성한 개별 거래건수·목록은 보존하지 못했다. 호가는 체결가가 아니고 층·향·수리·대지권·매물 중복을 통제하지 못하며, 인접형 선형환산은 면적차가 클수록 신뢰도가 낮다. 재현용 입력은 `data/naver_price_snapshot_20260816.csv`에 보존했다.
 - **공간자료**: 별도 polygon zoning 좌표와 건축물 대표점. 면적은 EPSG:5179에서 `sf::st_area()`로 계산했다. 원본 polygon에는 기하 오류와 요청면적 불일치가 있어 핵심 블록을 목표 계획면적에 맞게 보정했으며, 보정 geometry는 지적측량·소유권 경계·확정 공공기여 경계가 아니다.
 - **정책자료**: 국토교통부 2026.8.13 주택 신속공급 방안. 연구용역, 법안·시행령 개정 추진과 시행 중 조치가 섞여 있으며 이촌동 초입구역에 대한 직접 적용을 의미하지 않는다.
 - **벤치마크**: 서울시 정비사업 정보몽땅의 상봉10재정비촉진구역 사업개요. 다른 입지와 제도의 사례이므로 개발규모의 직접 근거가 아니다.
 - **시뮬레이션**: 공공기여율, 용적률, 주거배분비율과 세대당 평균 공급면적을 조합한 민감도 계산이다. 건축·교통·경관·환경·사업성·권리관계·분담금·분양성 검토를 대체하지 않는다.
-- **가구당 배정 예시**: O-1은 변경 전 문서의 용적률 380%·1,220세대 평형 재고를 다시 사용하되, 현재 공부상 810세대를 단지·현 공급면적 유형별로 연결했다. 전용률 75%, 평형 재고와 가구당 대지면적을 이용한 임의 배정이므로 실제 종전자산평가·분양신청·관리처분계획상 배정표가 아니다.
+- **가구당 배정 예시**: O-1은 변경 전 문서의 용적률 380%·1,220세대 평형 재고를 다시 사용하되, 현재 공부상 810세대의 가격 proxy와 한가람·코오롱·강촌 가치곡선 사이 전체 가치차 합을 최소화했다. 전용률 75%는 신축 공급면적 환산 가정일 뿐 현재주택 배정기준이 아니다. 가치 1순위와 최종평형이 다른 `r owner_inventory_changed_households`가구와 같은 가치 proxy 내 계산용 순번은 개인별 우선권을 뜻하지 않는다. 부대찌개건물 5가구는 현 면적과 가격을 모두 확인하지 못해 면적합계와 기초가치에 별도 placeholder가 포함된다. 실제 종전자산평가·분양신청·관리처분계획상 배정표가 아니다.
 - **업무·상업 O-2 예시**: 10,298㎡ 개념블록, 용적률 450%, 생활지원 35%p, 전용률 55%, 오피스텔 360실은 변경 전 구상을 현재 geometry에 맞춰 재계산한 입력값이다. 법정 상업지역 면적, 허용용도·용적률·높이 또는 공급계획이 아니며 업무 중심안 등 다른 용도대안과 비교해야 한다.
 - **비주거·부속상가 재진입 예시**: 공부상 상가호수 164호와 건축물대장 대지면적을 사용하되, 혼합건물은 상가·주택 호수비례 대지 proxy, 대지면적 누락 건물은 20㎡ 임시 proxy, 후보 건물 최소 1실 규칙을 적용했다. 대지권·전유면적·소유자수·감정평가·영업가치·세입자 보상을 반영하지 않으므로 법적 권리배정표가 아니다.
 - **업무·상업 참고 이미지**: 그림 5의 450%·35층·15층·비주거 35%p 표기는 역사적 O-2 가정이다. 현재 geometry나 확정 건축계획과 일치하는 정량 근거가 아니며 저층 활성가로와 상부 복합용도라는 공간 원칙만 참고한다.

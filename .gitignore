@@ -1,4 +1,6 @@
 *.csv
+!data/
+!data/naver_price_snapshot_20260816.csv
 *.xls
 *.xlsx
 *.pdf

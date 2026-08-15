@@ -1,0 +1,43 @@
+snapshot_date,role,bldg_nm,current_supply_area_m2,naver_complex,matched_supply_m2,matched_exclusive_m2,reference_method,reference_price_eok,reference_supply_m2,reference_date,reference_basis,source_url,note
+2026-08-16,target,타워맨션,150,타워맨션,149.35,134.08,current_asking_nearest_type_scaled,30,170,2026-08-12,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/866,170㎡ 확인매물 호가를 현재 공급면적 비율로 환산
+2026-08-16,target,타워맨션,160,타워맨션,155.47,139.67,current_asking_nearest_type_scaled,30,170,2026-08-12,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/866,170㎡ 확인매물 호가를 현재 공급면적 비율로 환산
+2026-08-16,target,타워맨션,220,타워맨션,221.33,200.10,current_asking_nearest_type_scaled,36,223,2026-08-10,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/866,223㎡ 확인매물 호가를 현재 공급면적 비율로 환산
+2026-08-16,target,빌라맨션,230,빌라맨션,229.75,229.75,current_asking_same_type,32,229,2026-08-12,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/11318,동일·근접형 확인매물
+2026-08-16,target,빌라맨션,170,빌라맨션,174.48,174.48,current_asking_nearest_type_scaled,32,229,2026-08-12,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/11318,229㎡ 확인매물 호가를 현재 공급면적 비율로 환산
+2026-08-16,target,빌라맨션,20,빌라맨션,20.26,20.26,current_asking_nearest_type_scaled,32,229,2026-08-12,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/11318,동일형 호가 부재로 229㎡ 확인매물 단가를 환산한 저신뢰 proxy
+2026-08-16,target,퀸스리버빌,230,퀸스리버빌,247.58,198.39,archived_asking,32.5,229,2026-05-01,저장된 네이버 호가 스냅샷,https://fin.land.naver.com/complexes/9080,2026-08-16 현재 실거래·호가 미확인으로 보관 자료 사용
+2026-08-16,target,센트레빌,80,동부센트레빌,78.75,59.99,current_asking_nearest_type_scaled,26.5,111,2026-08-14,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/3881,111㎡ 확인매물 호가를 현재 공급면적 비율로 환산
+2026-08-16,target,센트레빌,111,동부센트레빌,111.12,84.65,current_asking_same_type,26.5,111,2026-08-14,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/3881,동일형 확인매물
+2026-08-16,target,센트레빌,132,동부센트레빌,132.33,100.80,current_asking_nearest_type_scaled,26.5,111,2026-08-14,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/3881,111㎡ 확인매물 호가를 현재 공급면적 비율로 환산
+2026-08-16,target,정우맨션,300,정우,293.61,226.35,latest_prior_trade,20,293.61,2025-08-29,최근 3개월 밖 최종 확인 실거래,https://fin.land.naver.com/complexes/10712,현재 호가 부재로 과거 거래를 임시 사용
+2026-08-16,target,한강제일맨션,132,제일맨션,132.72,125.62,current_asking_nearest_type_scaled,19,136,2026-08-13,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/100468,136㎡ 확인매물 호가를 현재 공급면적 비율로 환산
+2026-08-16,target,장미맨션,207,장미맨션,207.19,196.71,latest_prior_trade,31,207.19,2026-05-09,최근 3개월 밖 최종 확인 실거래,https://fin.land.naver.com/complexes/11190,기준일보다 7일 이른 거래로 별도 표시
+2026-08-16,target,장미맨션,110,장미맨션,104.80,98.35,prior_trade_nearest_type_scaled,31,207.19,2026-05-09,최근 3개월 밖 최종 확인 실거래,https://fin.land.naver.com/complexes/11190,동일형 자료 부재로 207.19㎡ 거래단가를 환산한 저신뢰 proxy
+2026-08-16,target,코스모스맨션,270,코스모스맨숀,269.57,250.44,archived_asking,23,269,2026-05-01,저장된 네이버 호가 스냅샷,https://fin.land.naver.com/complexes/13004,2026-08-16 현재 실거래·호가 미확인으로 보관 자료 사용
+2026-08-16,target,한강동부,102,한강동부,102.20,83.77,current_asking_same_type,19.5,102,2026-08-14,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/102547,동일형 확인매물
+2026-08-16,target,한강동부,120,한강동부,120.59,84.82,current_asking_nearest_type_scaled,19.5,102,2026-08-14,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/102547,102㎡ 확인매물 호가를 현재 공급면적 비율로 환산
+2026-08-16,target,한강동부,91,한강동부,91.74,74.77,current_asking_nearest_type_scaled,19.5,102,2026-08-14,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/102547,102㎡ 확인매물 호가를 현재 공급면적 비율로 환산
+2026-08-16,target,한강동부,180,한강동부,185.70,129.56,current_asking_nearest_type_scaled,19.5,102,2026-08-14,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/102547,102㎡ 확인매물 호가를 현재 공급면적 비율로 환산한 저신뢰 proxy
+2026-08-16,target,월드,93,월드메르디앙,93.38,84.96,current_asking_same_type,19.5,93,2026-08-14,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/10633,동일형 확인매물
+2026-08-16,target,월드,128,월드메르디앙,128.11,116.56,current_asking_same_type,23,128,2026-08-12,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/10633,동일형 확인매물
+2026-08-16,target,월드,141,월드메르디앙,141.40,128.66,current_asking_same_type,29,141,2026-08-01,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/10633,동일형 확인매물
+2026-08-16,target,월드,186,월드메르디앙,141.40,128.66,current_asking_nearest_type_scaled,29,141,2026-08-01,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/10633,저장 평형과 네이버 평형 불일치로 141㎡ 호가단가 환산
+2026-08-16,target,보람,109,보람더하임,109.09,84.58,recent_3m_trade,19.5,109.09,2026-05-23,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/102545,네이버 표시 3개월 평균
+2026-08-16,target,보람,158,보람더하임,158.83,120.33,current_asking_same_type,29.5,158,2026-08-07,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/102545,동일형 확인매물
+2026-08-16,target,미주A,210,미주(A동),209.04,205.74,current_asking_nearest_type_scaled,25,212,2026-08-10,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/10360,212㎡ 확인매물 호가를 현재 공급면적 비율로 환산
+2026-08-16,target,미주B,160,미주맨션B동,159.37,149.12,recent_3m_trade,18.5,159.37,2026-05-26,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/101074,네이버 표시 3개월 평균
+2026-08-16,target,노들맨션,230,노들맨션,230.25,230.25,current_asking_nearest_type_scaled,24,204,2026-08-14,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/16336,204㎡ 확인매물 호가를 현재 공급면적 비율로 환산
+2026-08-16,target,노들맨션,190,노들맨션,190.71,190.71,current_asking_same_type,25,190,2026-07-23,현재 확인매물 최저 호가,https://fin.land.naver.com/complexes/16336,동일형 확인매물
+2026-08-16,target,부대찌개건물,78.6667,부대찌개건물,,,missing_proxy,,,,가격 미확인,,네이버 단지형 자료가 없어 알려진 대상가구 하위 25%를 임시 적용
+2026-08-16,benchmark,한가람,,한가람,85.12,59.88,recent_3m_trade,23.99,85.12,2026-07-17,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/867,59㎡대 기준점
+2026-08-16,benchmark,한가람,,한가람,111.39,84.96,recent_3m_trade,27.8,111.39,2026-05-25,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/867,84㎡대 기준점
+2026-08-16,benchmark,한가람,,한가람,142.63,114.96,recent_3m_trade,32.6333,142.63,2026-07-27,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/867,115㎡대 기준점
+2026-08-16,benchmark,강촌,,강촌,84.06,59.12,recent_3m_trade,22.4333,84.06,2026-07-23,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/761,59㎡대 기준점
+2026-08-16,benchmark,강촌,,강촌,110.17,84.90,recent_3m_trade,25.5,110.17,2026-07-18,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/761,84㎡대 기준점 C형
+2026-08-16,benchmark,강촌,,강촌,110.76,84.77,current_asking_same_type,27.9,110.76,2026-08-16,현재 동일형 최저 호가,https://fin.land.naver.com/complexes/761,최근 3개월 거래 부재
+2026-08-16,benchmark,강촌,,강촌,110.86,84.85,recent_3m_trade,25.9,110.86,2026-05-31,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/761,84㎡대 기준점 B형
+2026-08-16,benchmark,강촌,,강촌,133.40,106.64,recent_3m_trade,27,133.40,2026-06-13,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/761,중간 면적 관측값
+2026-08-16,benchmark,강촌,,강촌,141.87,114.59,recent_3m_trade,31.35,141.87,2026-07-02,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/761,115㎡대 기준점
+2026-08-16,benchmark,코오롱,,이촌코오롱,87.03,59.82,recent_3m_trade,22.5666,87.03,2026-07-07,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/892,59㎡대 기준점
+2026-08-16,benchmark,코오롱,,이촌코오롱,107.17,84.78,recent_3m_trade,26.15,107.17,2026-07-18,최근 3개월 평균 실거래,https://fin.land.naver.com/complexes/892,84㎡대 기준점
+2026-08-16,benchmark,코오롱,,이촌코오롱,145.00,114.69,current_asking_same_type,32,145.00,2026-08-16,현재 동일형 최저 호가,https://fin.land.naver.com/complexes/892,최근 3개월 거래 부재
